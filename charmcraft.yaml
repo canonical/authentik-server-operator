@@ -1,0 +1,107 @@
+# Copyright 2025 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+name: authentik-server
+type: charm
+title: Authentik Server Operator
+summary: Operator for Authentik Server
+description: |
+    Operator for Authentik Server
+links:
+  source: https://github.com/canonical/authenik-server-operator
+  issues: https://github.com/canonical/authenik-server-operator/issues
+
+charm-user: non-root
+platforms:
+  ubuntu@22.04:amd64:
+
+assumes:
+  - juju >= 3.0.2
+  - k8s-api
+
+config:
+  options:
+    http_proxy:
+      description: URL of the HTTP proxy eg http://proxy.internal:6666, it will set the HTTP_PROXY var in the workload environment
+      type: string
+      default: ''
+    https_proxy:
+      description: URL of the HTTPS proxy eg http://proxy.internal:6666, it will set the HTTPS_PROXY var in the workload environment
+      type: string
+      default: ''
+    no_proxy:
+      description: Domains that need to be excluded from proxying no_proxy="test.com,test.co.uk", it is a comma separate list
+      type: string
+      default: ''
+    log_level:
+      description: |
+        Configures the log level.
+
+        Acceptable values are: "info", "debug", "warning", "error" and "critical"
+      default: "info"
+      type: string
+    cpu:
+      description: |
+        K8s cpu resource limit, e.g. "1" or "500m". Default is unset (no limit). This value is used
+        for the "limits" portion of the resource requirements (the "requests" portion is
+        automatically deduced from it).
+        See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+      type: string
+    memory:
+      description: |
+        K8s memory resource limit, e.g. "1Gi". Default is unset (no limit). This value is used
+        for the "limits" portion of the resource requirements (the "requests" portion is
+        automatically deduced from it).
+        See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+      type: string
+
+actions:
+
+requires:
+  logging:
+    interface: loki_push_api
+    optional: true
+  tracing:
+    interface: tracing
+    limit: 1
+    optional: true
+    description: |
+      Provides traces to COS Tempo instance
+  pg-database:
+    interface: postgresql_client
+    optional: false
+    limit: 1
+
+provides:
+  metrics-endpoint:
+    interface: prometheus_scrape
+    optional: true
+    description: |
+      Provides application metrics to COS Prometheus instance
+  grafana-dashboard:
+    interface: grafana_dashboard
+    optional: true
+    description: |
+      Forwards the built-in grafana dashboard(s) for monitoring tenant-service.
+
+containers:
+  authentik-server:
+    gid: 584792
+    uid: 584792
+    resource: oci-image
+
+resources:
+  oci-image:
+    type: oci-image
+    description: OCI image for authentik-server
+    upstream-source: ghcr.io/canonical/authentik-server:v0.2.0
+
+parts:
+  charm:
+    charm-binary-python-packages:
+      - jsonschema
+      - "pydantic>=2"
+      - "setuptools>=70.0.0"
+    build-packages:
+      - "rustc-1.85"
+      - "cargo-1.85"

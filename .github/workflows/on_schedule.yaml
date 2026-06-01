@@ -1,0 +1,19 @@
+name: On Schedule
+on:
+  schedule:
+    - cron: '0 8 * * MON'
+
+jobs:
+  update-charm-libs:
+    name: Update Charm Libraries
+    uses: canonical/identity-team/.github/workflows/charm-libs-update.yaml@59d4d2782bcb8fc2deea2aa08442e4c8603f2689 # v1.11.2
+    secrets:
+      CHARMCRAFT_CREDENTIALS: ${{ secrets.CHARMCRAFT_CREDENTIALS }}
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+  tests:
+    name: CI
+    uses: canonical/identity-team/.github/workflows/charm-pull-request.yaml@59d4d2782bcb8fc2deea2aa08442e4c8603f2689 # v1.11.2
+    with:
+      container-name: "authentik-server"
+      use-charmcraftcache: true

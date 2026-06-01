@@ -1,0 +1,69 @@
+# reusable workflow for publishing all charms in this repo
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v**"
+      - "track**"
+
+  workflow_dispatch:
+    inputs:
+      destination_channel:
+        description: CharmHub channel to publish to
+        required: false
+        default: 'latest/edge'
+        type: string
+      source_branch:
+        description: Github branch from this repo to publish.  If blank, will use the default branch
+        required: false
+        default: ''
+        type: string
+      override-ci:
+        description: Override standard release flow
+        required: true
+        type: boolean
+
+jobs:
+  publish:
+    permissions:
+      contents: write
+      issues: write
+    name: Publish Charm
+    uses: canonical/identity-team/.github/workflows/charm-publish.yaml@59d4d2782bcb8fc2deea2aa08442e4c8603f2689 # v1.11.2
+    with:
+      destination_channel: ${{ inputs.destination_channel}}
+      source_branch: ${{ inputs.source_branch}}
+      use-charmcraftcache: false
+    secrets:
+      CHARMCRAFT_CREDENTIALS: ${{ secrets.CHARMCRAFT_CREDENTIALS}}
+
+  revision:
+    concurrency:
+      group: ${{ needs.publish.outputs.track }}-${{ needs.publish.outputs.channel }}
+      cancel-in-progress: true
+    needs:
+      - publish
+    outputs:
+      revision: ${{ steps.set-revision.outputs.revision }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+      - name: Set charm name
+        id: set-charm-name
+        run: echo charm_name=$(cat charmcraft.yaml | yq '.name') >> $GITHUB_OUTPUT
+      - name: Set revision
+        id: set-revision
+        run: |
+          sudo snap install charmcraft --classic --channel latest/stable
+          revision=$(charmcraft status ${{ env.CHARM_NAME }} --format json | jq '.[] | select(.track == "${{ env.TRACK }}") | .mappings[0].releases[] | select(.channel == "${{ needs.publish.outputs.channel }}") | .revision')
+          echo "setting output of revision=$revision"
+          echo "revision=$revision" >> $GITHUB_OUTPUT
+        env:
+          CHARMCRAFT_AUTH: ${{ secrets.CHARMCRAFT_CREDENTIALS }}
+          CHARM_NAME: ${{ steps.set-charm-name.outputs.charm_name }}
+          # only cater for latest track for now
+          TRACK: latest

@@ -1,0 +1,26 @@
+name: ci
+run-name: CI for ${{ github.sha }} on ${{ github.ref_name }}
+
+on:
+   workflow_dispatch:
+   push:
+     branches:
+     - "main"
+     - "release-**"
+     - "track/**"
+     paths-ignore:
+     - "terraform/**"
+   pull_request:
+     branches:
+     - "*"
+     paths-ignore:
+     - "terraform/**"
+
+jobs:
+  tests:
+    name: CI
+    uses: canonical/identity-team/.github/workflows/charm-pull-request.yaml@59d4d2782bcb8fc2deea2aa08442e4c8603f2689 # v1.11.2
+    with:
+      container-name: "authentik-server"
+      use-charmcraftcache: false
+      node-size: large

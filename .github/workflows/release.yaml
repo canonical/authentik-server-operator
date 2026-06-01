@@ -1,0 +1,19 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+    - main
+    - "track/**"
+
+permissions:
+    contents: write
+    pull-requests: write
+
+jobs:
+  release:
+      name: release
+      uses: canonical/identity-team/.github/workflows/charm-release.yaml@59d4d2782bcb8fc2deea2aa08442e4c8603f2689 # v1.11.2
+      secrets:
+        PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
