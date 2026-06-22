@@ -10,3 +10,7 @@ class CharmError(Exception):
 
 class PebbleError(CharmError):
     """Error for pebble related operations."""
+
+
+class SecretError(CharmError):
+    """Error for secret-related operations."""
