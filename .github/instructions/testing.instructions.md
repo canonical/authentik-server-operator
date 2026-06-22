@@ -14,6 +14,7 @@ One file per concern:
 | `test_charm.py` | Lifecycle events, `_reconcile()`, collect-status, relation events |
 | `test_integrations.py` | Integration wrapper classes tested in isolation |
 | `test_configs.py` | `CharmConfig` validation and env var output |
+| `test_libs.py` | Charm libraries owned by this repo (`authentik_cluster`, `authentik_server_info`) |
 
 ## Unit Tests (`tests/unit/`)
 
@@ -46,8 +47,10 @@ The factory builds a complete `testing.State` with sensible defaults (leader=Tru
 ### Mocking Rules
 
 - **`mocked_k8s_resource_patch`** — Autouse fixture that mocks `KubernetesComputeResourcesPatch`.
+- **`mocked_get_missing_config_keys`** — Included in `all_satisfied_conditions`; patches `CharmConfig.get_missing_config_keys` to return `[]`.
 - For `collect-unit-status` tests, mock integration `is_ready()` methods to control status path.
 - Use `create_autospec()` for library objects in integration wrapper tests.
+- **`mocker.patch.object` on charm handlers DOES NOT WORK** — `ops.Framework.observe()` rejects MagicMock observers. Library event tests must use state-based assertions instead.
 
 ### Relation Fixtures
 
