@@ -1,11 +1,73 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-import logging
-from typing import TYPE_CHECKING
+"""Interface library for sharing authentik-server info.
 
-import ops
-from ops import Object
+This library provides a Python API for both providing and requesting
+authentik-server deployment info, such as the HTTP service URL and
+bootstrap credentials.
+
+## Getting Started
+
+To use the library from the provider side:
+
+In the `charmcraft.yaml` of the charm, add:
+```yaml
+provides:
+  authentik-server-info:
+    interface: authentik_server_info
+    optional: true
+```
+
+Then, to initialise the library:
+```python
+from charms.authentik_server.v0.authentik_server_info import AuthentikServerInfoProvider
+
+class AuthentikServerCharm(CharmBase):
+    def __init__(self, *args):
+        self.server_info_provider = AuthentikServerInfoProvider(self)
+        self.framework.observe(
+            self.server_info_provider.on.ready,
+            self._on_server_info_ready,
+        )
+
+    def _on_server_info_ready(self, event):
+        self.server_info_provider.set_server_info(
+            authentik_host="http://authentik-server:9000",
+            bootstrap_token=token_value,
+            bootstrap_password=password_value,
+        )
+```
+
+To use from the requirer side:
+
+In the `charmcraft.yaml` of the charm, add:
+```yaml
+requires:
+  authentik-server-info:
+    interface: authentik_server_info
+    optional: true
+```
+
+Then, to initialise the library:
+```python
+from charms.authentik_server.v0.authentik_server_info import AuthentikServerInfoRequirer
+
+class AuthentikLdapOutpostCharm(CharmBase):
+    def __init__(self, *args):
+        self.server_info = AuthentikServerInfoRequirer(self)
+        self.framework.observe(
+            self.server_info.on.info_changed,
+            self._on_server_info_changed,
+        )
+```
+"""
+
+import logging
+from typing import Optional
+
+from ops.charm import CharmBase, RelationBrokenEvent, RelationChangedEvent, RelationCreatedEvent
+from ops.framework import EventBase, EventSource, Object, ObjectEvents
 
 # The unique Charmhub library identifier, never change it
 LIBID = "0000000000000000"
@@ -15,21 +77,37 @@ LIBAPI = 0
 
 # Increment this PATCH version before using `charmcraft publish-lib` or reset
 # to 0 if you are raising the major API version
-LIBPATCH = 1
+LIBPATCH = 2
 
-if TYPE_CHECKING:
-    from ops import CharmBase
+RELATION_NAME = "authentik-server-info"
+INTERFACE_NAME = "authentik_server_info"
 
 logger = logging.getLogger(__name__)
 
 
-class AuthentikServerInfoProviderEvents(Object):
+class AuthentikServerInfoReadyEvent(EventBase):
+    """Event emitted when the provider populates the relation with info."""
+
+
+class AuthentikServerInfoChangedEvent(EventBase):
+    """Event emitted when server-info relation data changes."""
+
+
+class AuthentikServerInfoRemovedEvent(EventBase):
+    """Event emitted when the server-info relation is removed."""
+
+
+class AuthentikServerInfoProviderEvents(ObjectEvents):
     """Events for AuthentikServerInfoProvider."""
 
-    def __init__(self):
-        super().__init__()
-        self._ready = ops.EventSource(ops.EventBase)
-        self.on = self._ready
+    ready = EventSource(AuthentikServerInfoReadyEvent)
+
+
+class AuthentikServerInfoRequirerEvents(ObjectEvents):
+    """Events for AuthentikServerInfoRequirer."""
+
+    info_changed = EventSource(AuthentikServerInfoChangedEvent)
+    info_removed = EventSource(AuthentikServerInfoRemovedEvent)
 
 
 class AuthentikServerInfoProvider(Object):
@@ -37,22 +115,25 @@ class AuthentikServerInfoProvider(Object):
 
     Usage in server charm:
         self.server_info_provider = AuthentikServerInfoProvider(self)
-        # In _ensure_server_info_relation():
-        self.server_info_provider.set_server_info(
-            authentik_host="http://authentik-server:9000",
-            bootstrap_token=token_value,
-            bootstrap_password=password_value,
-        )
+        self.framework.observe(self.server_info_provider.on.ready, self._on_server_info_ready)
     """
 
     on = AuthentikServerInfoProviderEvents()
 
-    def __init__(self, charm: "CharmBase", relation_name: str = "authentik-server-info"):
+    def __init__(self, charm: CharmBase, relation_name: str = RELATION_NAME):
         super().__init__(charm, relation_name)
         self._relation_name = relation_name
         self._charm = charm
         self._token_secret = None
         self._password_secret = None
+
+        self.framework.observe(
+            self._charm.on[relation_name].relation_created,
+            self._on_relation_created,
+        )
+
+    def _on_relation_created(self, event: RelationCreatedEvent) -> None:
+        self.on.ready.emit()
 
     def set_server_info(
         self,
@@ -93,8 +174,6 @@ class AuthentikServerInfoProvider(Object):
                 "bootstrap_password_secret_id": self._password_secret.id,
             })
 
-        self.on.emit()
-
     def is_ready(self) -> bool:
         """True if server info has been published."""
         if not self._charm.unit.is_leader():
@@ -105,42 +184,48 @@ class AuthentikServerInfoProvider(Object):
         return False
 
 
-class AuthentikServerInfoRequirerEvents(Object):
-    """Events for AuthentikServerInfoRequirer."""
-
-    def __init__(self):
-        super().__init__()
-        self._info_changed = ops.EventSource(ops.EventBase)
-        self._info_removed = ops.EventSource(ops.EventBase)
-        self.on = type("Events", (), {
-            "info_changed": self._info_changed,
-            "info_removed": self._info_removed,
-        })()
-
-
 class AuthentikServerInfoRequirer(Object):
     """LDAP-outpost-side of the authentik-server-info relation.
 
     Usage in LDAP charm:
         self.server_info = AuthentikServerInfoRequirer(self)
-        # In _build_env():
-        host = self.server_info.get_authentik_host()
-        token = self.server_info.get_authentik_token()
+        self.framework.observe(self.server_info.on.info_changed, self._on_info_changed)
     """
 
-    def __init__(self, charm: "CharmBase", relation_name: str = "authentik-server-info"):
+    on = AuthentikServerInfoRequirerEvents()
+
+    def __init__(self, charm: CharmBase, relation_name: str = RELATION_NAME):
         super().__init__(charm, relation_name)
         self._relation_name = relation_name
         self._charm = charm
 
-    def get_authentik_host(self) -> str | None:
+        self.framework.observe(
+            self._charm.on[relation_name].relation_changed,
+            self._on_relation_changed,
+        )
+        self.framework.observe(
+            self._charm.on[relation_name].relation_broken,
+            self._on_relation_broken,
+        )
+
+    def _on_relation_changed(self, event: RelationChangedEvent) -> None:
+        if not event.relation.app:
+            return
+        if not event.relation.data.get(event.relation.app):
+            return
+        self.on.info_changed.emit()
+
+    def _on_relation_broken(self, event: RelationBrokenEvent) -> None:
+        self.on.info_removed.emit()
+
+    def get_authentik_host(self) -> Optional[str]:
         """Return the Authentik server URL."""
         relation = self._charm.model.get_relation(self._relation_name)
         if not relation or not relation.app:
             return None
         return relation.data[relation.app].get("authentik_host")
 
-    def get_authentik_token(self) -> str | None:
+    def get_authentik_token(self) -> Optional[str]:
         """Retrieve bootstrap token from Juju secret."""
         relation = self._charm.model.get_relation(self._relation_name)
         if not relation or not relation.app:
@@ -151,7 +236,7 @@ class AuthentikServerInfoRequirer(Object):
         secret = self._charm.model.get_secret(id=secret_id)
         return secret.get_content()["bootstrap-token"]
 
-    def get_bootstrap_password(self) -> str | None:
+    def get_bootstrap_password(self) -> Optional[str]:
         """Retrieve bootstrap password from Juju secret."""
         relation = self._charm.model.get_relation(self._relation_name)
         if not relation or not relation.app:
