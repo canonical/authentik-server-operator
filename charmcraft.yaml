@@ -119,7 +119,7 @@ resources:
   oci-image:
     type: oci-image
     description: OCI image for authentik-server
-    upstream-source: ghcr.io/canonical/authentik-server:stable
+    upstream-source: ghcr.io/canonical/authentik-server:2026.5.3
 
 parts:
   charm:
