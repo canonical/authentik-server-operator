@@ -8,8 +8,9 @@ summary: Operator for Authentik Server
 description: |
     Operator for Authentik Server
 links:
-  source: https://github.com/canonical/authenik-server-operator
-  issues: https://github.com/canonical/authenik-server-operator/issues
+  source: https://github.com/canonical/authentik-server-operator
+  issues: https://github.com/canonical/authentik-server-operator/issues
+  documentation: https://charmhub.io/authentik-server
 
 charm-user: non-root
 platforms:
@@ -46,6 +47,7 @@ config:
         K8s cpu resource limit, e.g. "1" or "500m". Default is unset (no limit). This value is used
         for the "limits" portion of the resource requirements (the "requests" portion is
         automatically deduced from it).
+        Recommended production starting point: "500m".
         See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
       type: string
     memory:
@@ -53,6 +55,7 @@ config:
         K8s memory resource limit, e.g. "1Gi". Default is unset (no limit). This value is used
         for the "limits" portion of the resource requirements (the "requests" portion is
         automatically deduced from it).
+        Recommended production starting point: "1Gi".
         See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
       type: string
     web_workers:
