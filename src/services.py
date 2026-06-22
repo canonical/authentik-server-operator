@@ -12,6 +12,7 @@ from ops.pebble import CheckStatus, Layer, LayerDict
 from constants import (
     COMMAND,
     HEALTH_CHECK_URL,
+    HEALTH_READY_URL,
     HTTP_PORT,
     HTTPS_PORT,
     PEBBLE_READY_CHECK_NAME,
@@ -35,14 +36,22 @@ PEBBLE_LAYER_DICT: LayerDict = {
         }
     },
     "checks": {
-        PEBBLE_READY_CHECK_NAME: {
+        "alive": {
             "override": "replace",
             "level": "alive",
-            "threshold": 30,
+            "threshold": 60,
             "http": {
                 "url": HEALTH_CHECK_URL,
             },
-        }
+        },
+        PEBBLE_READY_CHECK_NAME: {
+            "override": "replace",
+            "level": "ready",
+            "threshold": 60,
+            "http": {
+                "url": HEALTH_READY_URL,
+            },
+        },
     },
 }
 

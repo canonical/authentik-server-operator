@@ -9,6 +9,7 @@ COMMAND = "/lifecycle/ak server"
 HTTP_PORT = 9000
 HTTPS_PORT = 9443
 HEALTH_CHECK_URL = f"http://localhost:{HTTP_PORT}/-/health/live/"
+HEALTH_READY_URL = f"http://localhost:{HTTP_PORT}/-/health/ready/"
 
 DATABASE_RELATION = "pg-database"
 INGRESS_RELATION = "ingress"

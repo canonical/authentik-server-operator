@@ -136,6 +136,7 @@ class AuthentikServerCharm(ops.CharmBase):
         self.framework.observe(self.on.leader_elected, self._on_holistic_handler)
         self.framework.observe(self.on.leader_settings_changed, self._on_holistic_handler)
         self.framework.observe(self.on.secret_changed, self._on_holistic_handler)
+        self.framework.observe(self.on.secret_expired, self._on_holistic_handler)
         self.framework.observe(self.on.update_status, self._on_holistic_handler)
 
         # Peer relation
@@ -332,7 +333,7 @@ class AuthentikServerCharm(ops.CharmBase):
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         """Build resource requirements from charm config."""
         limits = {"cpu": self.model.config.get("cpu"), "memory": self.model.config.get("memory")}
-        requests = {"cpu": "100m", "memory": "200Mi"}
+        requests = {"cpu": "500m", "memory": "1Gi"}
         return adjust_resource_requirements(limits, requests, adhere_to_requests=True)
 
 
