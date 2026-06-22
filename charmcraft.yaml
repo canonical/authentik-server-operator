@@ -1,4 +1,4 @@
-# Copyright 2025 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 name: authentik-server
@@ -37,7 +37,8 @@ config:
       description: |
         Configures the log level.
 
-        Acceptable values are: "info", "debug", "warning", "error" and "critical"
+        Acceptable values are: "debug", "info", "warning", "error", and "trace".
+        Note: "trace" logs may include sensitive data such as session cookies.
       default: "info"
       type: string
     cpu:
@@ -54,6 +55,13 @@ config:
         automatically deduced from it).
         See https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
       type: string
+    web_workers:
+      description: |
+        Number of gunicorn worker processes for the authentik web server.
+        Increase this if you cannot scale horizontally and need higher throughput.
+        A value below 2 is not recommended.
+      type: int
+      default: 2
 
 actions:
 
@@ -71,6 +79,10 @@ requires:
     interface: postgresql_client
     optional: false
     limit: 1
+  ingress:
+    interface: ingress
+    optional: true
+    limit: 1
 
 provides:
   metrics-endpoint:
@@ -83,9 +95,19 @@ provides:
     optional: true
     description: |
       Forwards the built-in grafana dashboard(s) for monitoring tenant-service.
+  authentik-cluster:
+    interface: authentik_cluster
+    optional: false
+  authentik-server-info:
+    interface: authentik_server_info
+    optional: true
+
+peers:
+  authentik-peers:
+    interface: authentik_peers
 
 containers:
-  authentik-server:
+  authentik:
     gid: 584792
     uid: 584792
     resource: oci-image
@@ -94,7 +116,7 @@ resources:
   oci-image:
     type: oci-image
     description: OCI image for authentik-server
-    upstream-source: ghcr.io/canonical/authentik-server:v0.2.0
+    upstream-source: ghcr.io/canonical/authentik-server:stable
 
 parts:
   charm:

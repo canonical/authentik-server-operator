@@ -1,4 +1,4 @@
-# Copyright 2022 Canonical Ltd.
+# Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 [build-system]
@@ -32,6 +32,7 @@ unit = [
 ]
 integration = [
     "jubilant",
+    "pytest-jubilant>=2,<3",
     "pytest",
     "requests",
     "tenacity",
@@ -40,7 +41,7 @@ dev = [
     "authentik-server-operator[fmt,lint,unit,integration]",
     "pre-commit",
     "mypy",
-    "typesAuthentik Server",
+    "types-PyYAML",
     "types-requests",
 ]
 
