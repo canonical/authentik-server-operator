@@ -6,7 +6,6 @@
 
 import logging
 from secrets import token_urlsafe
-from urllib.parse import urlparse
 
 import ops
 from charms.authentik_server.v0.authentik_cluster import AuthentikClusterProvider
@@ -49,6 +48,7 @@ from constants import (
 from exceptions import CharmError, PebbleError
 from integrations import (
     DatabaseConfig,
+    IngressData,
     TracingData,
 )
 from secret import Secrets
@@ -156,34 +156,15 @@ class AuthentikServerCharm(ops.CharmBase):
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
 
     @property
-    def _web_path(self) -> str:
-        """The URL path under which authentik is served.
-
-        Reads the path component from the active ingress URL and ensures
-        it has a leading and trailing slash as required by authentik.
-        Falls back to "/" when ingress is not configured.
-        """
-        if url := self.ingress.url:
-            path = urlparse(url).path or "/"
-            if not path.endswith("/"):
-                path += "/"
-            return path
-        return "/"
-
-    @property
     def _pebble_layer(self) -> ops.pebble.Layer:
         """Build the pebble layer from all env var sources."""
-        layer = self._pebble.render_pebble_layer(
+        return self._pebble.render_pebble_layer(
             DatabaseConfig.load(self.database),
             self._secrets,
             self._config,
             TracingData.load(self.tracing),
+            IngressData.load(self.ingress),
         )
-        # Inject ingress-derived settings that cannot be computed statically
-        env = dict(layer.services[WORKLOAD_SERVICE].environment or {})
-        env["AUTHENTIK_WEB__PATH"] = self._web_path
-        layer.services[WORKLOAD_SERVICE].environment = env
-        return layer
 
     def _on_holistic_handler(self, event: ops.EventBase) -> None:
         """Entry point for the centralized reconciliation handler."""
@@ -261,8 +242,8 @@ class AuthentikServerCharm(ops.CharmBase):
         Uses the ingress URL when ingress is configured, otherwise falls back
         to the cluster-local service address.
         """
-        if url := self.ingress.url:
-            return str(url)
+        if url := IngressData.load(self.ingress).url:
+            return url
         return f"http://{self.app.name}.{self.model.name}.svc.cluster.local:{HTTP_PORT}"
 
     def _on_pebble_ready(self, event: ops.PebbleReadyEvent) -> None:

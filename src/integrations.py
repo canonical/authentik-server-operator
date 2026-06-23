@@ -5,9 +5,11 @@
 
 import logging
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
+from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 
 from env_vars import EnvVars
 
@@ -52,7 +54,29 @@ class DatabaseConfig:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
+class IngressData:
+    """The data source from the ingress integration."""
+
+    url: str = ""
+    web_path: str = "/"
+
+    def to_env_vars(self) -> EnvVars:
+        """Return ingress-derived environment variables."""
+        return {"AUTHENTIK_WEB__PATH": self.web_path}
+
+    @classmethod
+    def load(cls, requirer: IngressPerAppRequirer) -> "IngressData":
+        """Load ingress data from the relation."""
+        if not (url := requirer.url):
+            return cls()
+        path = urlparse(url).path or "/"
+        if not path.endswith("/"):
+            path += "/"
+        return cls(url=url, web_path=path)
+
+
+@dataclass(frozen=True, slots=True)
 class TracingData:
     """The data source from the tracing integration."""
 
