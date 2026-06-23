@@ -26,9 +26,7 @@ from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 from configs import CharmConfig
 from constants import (
     BOOTSTRAP_PASSWORD_KEY,
-    BOOTSTRAP_PASSWORD_LABEL,
     BOOTSTRAP_TOKEN_KEY,
-    BOOTSTRAP_TOKEN_LABEL,
     CLUSTER_RELATION,
     DATABASE_RELATION,
     GRAFANA_RELATION_NAME,
@@ -39,7 +37,6 @@ from constants import (
     PEER_RELATION,
     PROMETHEUS_RELATION_NAME,
     SECRET_KEY_KEY,
-    SECRET_KEY_LABEL,
     SERVER_INFO_RELATION,
     TRACING_RELATION_NAME,
     WORKLOAD_CONTAINER,
@@ -106,7 +103,7 @@ class AuthentikServerCharm(ops.CharmBase):
             protocols=["otlp_http"],
         )
 
-        self._secrets = Secrets(self.model)
+        self._secrets = Secrets(self.model, self.model.get_relation(PEER_RELATION))
 
         self.resources_patch = KubernetesComputeResourcesPatch(
             self,
@@ -228,7 +225,7 @@ class AuthentikServerCharm(ops.CharmBase):
             and self._secrets.is_ready()
             and self.model.relations[SERVER_INFO_RELATION]
         ):
-            self.server_info_provider.set_server_info(
+            self.server_info_provider.update_relations_app_data(
                 authentik_host=self._authentik_host,
                 bootstrap_token=self._secrets.bootstrap_token,
                 bootstrap_password=self._secrets.bootstrap_password,

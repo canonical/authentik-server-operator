@@ -26,8 +26,7 @@ SECRET_KEY_KEY = "secret-key"
 BOOTSTRAP_TOKEN_KEY = "bootstrap-token"
 BOOTSTRAP_PASSWORD_KEY = "bootstrap-password"
 
-SECRET_KEY_LABEL = "authentik-server-secret-key"
-BOOTSTRAP_TOKEN_LABEL = "authentik-server-bootstrap-token"
-BOOTSTRAP_PASSWORD_LABEL = "authentik-server-bootstrap-password"
+SECRETS_LABEL = "authentik-server-secrets"
+SECRETS_PEER_KEY = "secrets_id"
 
 PEBBLE_READY_CHECK_NAME = "ready"

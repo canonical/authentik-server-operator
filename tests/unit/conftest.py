@@ -136,10 +136,11 @@ def db_relation() -> testing.Relation:
 
 
 @pytest.fixture
-def peer_relation() -> testing.PeerRelation:
+def peer_relation(authentik_secrets: testing.Secret) -> testing.PeerRelation:
     return testing.PeerRelation(
         endpoint="authentik-peers",
         interface="authentik_peers",
+        local_app_data={"secrets_id": authentik_secrets.id},
     )
 
 

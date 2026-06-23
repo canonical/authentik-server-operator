@@ -87,14 +87,12 @@ class TestHolisticHandler:
         db_relation: testing.Relation,
         peer_relation: testing.PeerRelation,
         cluster_relation: testing.Relation,
-        secret_key_secret: testing.Secret,
-        bootstrap_token_secret: testing.Secret,
-        bootstrap_password_secret: testing.Secret,
+        authentik_secrets: testing.Secret,
         all_satisfied_conditions: None,
     ) -> None:
         state = create_state(
             relations=[db_relation, peer_relation, cluster_relation],
-            secrets=[secret_key_secret, bootstrap_token_secret, bootstrap_password_secret],
+            secrets=[authentik_secrets],
         )
 
         state_out = context.run(context.on.config_changed(), state)
@@ -107,22 +105,20 @@ class TestHolisticHandler:
         db_relation: testing.Relation,
         peer_relation: testing.PeerRelation,
         cluster_relation: testing.Relation,
-        secret_key_secret: testing.Secret,
-        bootstrap_token_secret: testing.Secret,
-        bootstrap_password_secret: testing.Secret,
+        authentik_secrets: testing.Secret,
         all_satisfied_conditions: None,
         mocker: MockerFixture,
     ) -> None:
-        mocked_setitem = mocker.patch("charm.Secrets.__setitem__")
+        mocked_create = mocker.patch("charm.Secrets.create")
         state = create_state(
             leader=False,
             relations=[db_relation, peer_relation, cluster_relation],
-            secrets=[secret_key_secret, bootstrap_token_secret, bootstrap_password_secret],
+            secrets=[authentik_secrets],
         )
 
         context.run(context.on.config_changed(), state)
 
-        mocked_setitem.assert_not_called()
+        mocked_create.assert_not_called()
 
     def test_charm_error_from_ensure_secrets(
         self,

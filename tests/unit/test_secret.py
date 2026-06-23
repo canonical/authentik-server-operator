@@ -10,21 +10,41 @@ from ops import Model, SecretNotFoundError
 
 from constants import (
     BOOTSTRAP_PASSWORD_KEY,
-    BOOTSTRAP_PASSWORD_LABEL,
     BOOTSTRAP_TOKEN_KEY,
-    BOOTSTRAP_TOKEN_LABEL,
     SECRET_KEY_KEY,
-    SECRET_KEY_LABEL,
+    SECRETS_LABEL,
+    SECRETS_PEER_KEY,
 )
 from exceptions import SecretError
 from secret import Secrets
 
+_SECRET_ID = "secret:abc123"
+_FULL_CONTENT = {
+    SECRET_KEY_KEY: "test-secret-key",
+    BOOTSTRAP_TOKEN_KEY: "test-token",
+    BOOTSTRAP_PASSWORD_KEY: "test-password",
+}
 
-def _make_secret(content: dict[str, str]) -> MagicMock:
-    """Create a mock secret object that returns the given content."""
+
+def _make_secret(content: dict[str, str], secret_id: str = _SECRET_ID) -> MagicMock:
+    """Create a mock Juju secret that returns the given content."""
     secret = MagicMock()
+    secret.id = secret_id
     secret.get_content.return_value = content
     return secret
+
+
+def _make_peer_relation(secret_id: str | None = _SECRET_ID) -> MagicMock:
+    """Create a mock peer Relation with an optional secret ID in the app databag."""
+    app_data: dict[str, str] = {}
+    if secret_id is not None:
+        app_data[SECRETS_PEER_KEY] = secret_id
+    # Use a plain MagicMock so .data can be freely assigned.
+    # rel.data[anything] returns the same app_data dict, mirroring RelationData.
+    rel = MagicMock()
+    rel.data = MagicMock()
+    rel.data.__getitem__ = MagicMock(return_value=app_data)
+    return rel
 
 
 class TestSecrets:
@@ -33,82 +53,78 @@ class TestSecrets:
         return create_autospec(Model)
 
     @pytest.fixture
-    def secrets(self, mocked_model: MagicMock) -> Secrets:
-        return Secrets(mocked_model)
+    def peer_relation_with_secret(self) -> MagicMock:
+        return _make_peer_relation(secret_id=_SECRET_ID)
 
     @pytest.fixture
-    def model_with_all_secrets(self, mocked_model: MagicMock) -> MagicMock:
-        """Model with all three secrets present."""
+    def peer_relation_empty(self) -> MagicMock:
+        return _make_peer_relation(secret_id=None)
 
-        def get_secret(label: str) -> MagicMock:
-            contents = {
-                SECRET_KEY_LABEL: {SECRET_KEY_KEY: "test-secret-key"},
-                BOOTSTRAP_TOKEN_LABEL: {BOOTSTRAP_TOKEN_KEY: "test-token"},
-                BOOTSTRAP_PASSWORD_LABEL: {BOOTSTRAP_PASSWORD_KEY: "test-password"},
-            }
-            return _make_secret(contents[label])
+    @pytest.fixture
+    def secrets_ready(
+        self, mocked_model: MagicMock, peer_relation_with_secret: MagicMock
+    ) -> Secrets:
+        """Secrets instance backed by a model that has the consolidated secret."""
+        mocked_model.get_secret.return_value = _make_secret(_FULL_CONTENT)
+        return Secrets(mocked_model, peer_relation_with_secret)
 
-        mocked_model.get_secret.side_effect = get_secret
-        return mocked_model
+    @pytest.fixture
+    def secrets_no_peer(self, mocked_model: MagicMock) -> Secrets:
+        return Secrets(mocked_model, peer_relation=None)
 
-    # --- __getitem__ ---
+    # --- create ---
 
-    def test_getitem_exists(self, secrets: Secrets, mocked_model: MagicMock) -> None:
-        content = {SECRET_KEY_KEY: "value"}
-        mocked_model.get_secret.return_value = _make_secret(content)
+    def test_create_stores_secret_id_in_peer_databag(
+        self, mocked_model: MagicMock, peer_relation_empty: MagicMock
+    ) -> None:
+        created_secret = _make_secret(_FULL_CONTENT)
+        mocked_model.app.add_secret.return_value = created_secret
+        secrets = Secrets(mocked_model, peer_relation_empty)
 
-        result = secrets[SECRET_KEY_LABEL]
+        secrets.create("sk", "bt", "bp")
 
-        assert result == content
+        mocked_model.app.add_secret.assert_called_once_with(
+            {SECRET_KEY_KEY: "sk", BOOTSTRAP_TOKEN_KEY: "bt", BOOTSTRAP_PASSWORD_KEY: "bp"},
+            label=SECRETS_LABEL,
+        )
+        peer_relation_empty.data[mocked_model.app][SECRETS_PEER_KEY] = created_secret.id
 
-    def test_getitem_not_found(self, secrets: Secrets, mocked_model: MagicMock) -> None:
-        mocked_model.get_secret.side_effect = SecretNotFoundError("not found")
+    def test_create_is_idempotent(
+        self, mocked_model: MagicMock, peer_relation_with_secret: MagicMock
+    ) -> None:
+        secrets = Secrets(mocked_model, peer_relation_with_secret)
 
-        result = secrets[SECRET_KEY_LABEL]
-
-        assert result is None
-
-    def test_getitem_invalid_label(self, secrets: Secrets) -> None:
-        result = secrets["invalid-label"]
-
-        assert result is None
-
-    # --- __setitem__ ---
-
-    def test_setitem(self, secrets: Secrets, mocked_model: MagicMock) -> None:
-        content = {SECRET_KEY_KEY: "value"}
-        mocked_model.get_secret.side_effect = SecretNotFoundError("not found")
-
-        secrets[SECRET_KEY_LABEL] = content
-
-        mocked_model.app.add_secret.assert_called_once_with(content, label=SECRET_KEY_LABEL)
-
-    def test_setitem_idempotent(self, secrets: Secrets, mocked_model: MagicMock) -> None:
-        content = {SECRET_KEY_KEY: "value"}
-        mocked_model.get_secret.return_value = _make_secret(content)
-
-        secrets[SECRET_KEY_LABEL] = content
+        secrets.create("sk", "bt", "bp")
 
         mocked_model.app.add_secret.assert_not_called()
 
-    def test_setitem_invalid_label(self, secrets: Secrets) -> None:
-        with pytest.raises(ValueError, match="Invalid label"):
-            secrets["invalid-label"] = {"key": "value"}
+    def test_create_without_peer_relation_does_not_raise(self, mocked_model: MagicMock) -> None:
+        secrets = Secrets(mocked_model, peer_relation=None)
+        mocked_model.app.add_secret.return_value = _make_secret(_FULL_CONTENT)
+
+        # Should not raise even when there is no peer relation to write to
+        secrets.create("sk", "bt", "bp")
 
     # --- is_ready ---
 
-    def test_is_ready_true(self, secrets: Secrets, model_with_all_secrets: MagicMock) -> None:
-        assert secrets.is_ready() is True
+    def test_is_ready_true(self, secrets_ready: Secrets) -> None:
+        assert secrets_ready.is_ready() is True
 
-    def test_is_ready_false(self, secrets: Secrets, mocked_model: MagicMock) -> None:
+    def test_is_ready_false_no_peer_relation(self, secrets_no_peer: Secrets) -> None:
+        assert secrets_no_peer.is_ready() is False
+
+    def test_is_ready_false_secret_not_found(
+        self, mocked_model: MagicMock, peer_relation_with_secret: MagicMock
+    ) -> None:
         mocked_model.get_secret.side_effect = SecretNotFoundError("not found")
+        secrets = Secrets(mocked_model, peer_relation_with_secret)
 
         assert secrets.is_ready() is False
 
     # --- to_env_vars ---
 
-    def test_to_env_vars(self, secrets: Secrets, model_with_all_secrets: MagicMock) -> None:
-        env = secrets.to_env_vars()
+    def test_to_env_vars(self, secrets_ready: Secrets) -> None:
+        env = secrets_ready.to_env_vars()
 
         assert env["AUTHENTIK_SECRET_KEY"] == "test-secret-key"
         assert env["AUTHENTIK_BOOTSTRAP_TOKEN"] == "test-token"
@@ -116,39 +132,23 @@ class TestSecrets:
 
     # --- Properties ---
 
-    def test_secret_key_property(self, secrets: Secrets, mocked_model: MagicMock) -> None:
-        mocked_model.get_secret.return_value = _make_secret({SECRET_KEY_KEY: "my-key"})
+    def test_secret_key_property(self, secrets_ready: Secrets) -> None:
+        assert secrets_ready.secret_key == "test-secret-key"
 
-        assert secrets.secret_key == "my-key"
-
-    def test_secret_key_not_available(self, secrets: Secrets, mocked_model: MagicMock) -> None:
-        mocked_model.get_secret.side_effect = SecretNotFoundError("not found")
-
+    def test_secret_key_not_available(self, secrets_no_peer: Secrets) -> None:
         with pytest.raises(SecretError, match="Secret key is not available"):
-            _ = secrets.secret_key
+            _ = secrets_no_peer.secret_key
 
-    def test_bootstrap_token_property(self, secrets: Secrets, mocked_model: MagicMock) -> None:
-        mocked_model.get_secret.return_value = _make_secret({BOOTSTRAP_TOKEN_KEY: "my-token"})
+    def test_bootstrap_token_property(self, secrets_ready: Secrets) -> None:
+        assert secrets_ready.bootstrap_token == "test-token"
 
-        assert secrets.bootstrap_token == "my-token"
-
-    def test_bootstrap_token_not_available(
-        self, secrets: Secrets, mocked_model: MagicMock
-    ) -> None:
-        mocked_model.get_secret.side_effect = SecretNotFoundError("not found")
-
+    def test_bootstrap_token_not_available(self, secrets_no_peer: Secrets) -> None:
         with pytest.raises(SecretError, match="Bootstrap token is not available"):
-            _ = secrets.bootstrap_token
+            _ = secrets_no_peer.bootstrap_token
 
-    def test_bootstrap_password_property(self, secrets: Secrets, mocked_model: MagicMock) -> None:
-        mocked_model.get_secret.return_value = _make_secret({BOOTSTRAP_PASSWORD_KEY: "my-pass"})
+    def test_bootstrap_password_property(self, secrets_ready: Secrets) -> None:
+        assert secrets_ready.bootstrap_password == "test-password"
 
-        assert secrets.bootstrap_password == "my-pass"
-
-    def test_bootstrap_password_not_available(
-        self, secrets: Secrets, mocked_model: MagicMock
-    ) -> None:
-        mocked_model.get_secret.side_effect = SecretNotFoundError("not found")
-
+    def test_bootstrap_password_not_available(self, secrets_no_peer: Secrets) -> None:
         with pytest.raises(SecretError, match="Bootstrap password is not available"):
-            _ = secrets.bootstrap_password
+            _ = secrets_no_peer.bootstrap_password
