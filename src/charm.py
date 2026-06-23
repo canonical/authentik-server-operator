@@ -25,8 +25,6 @@ from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 
 from configs import CharmConfig
 from constants import (
-    BOOTSTRAP_PASSWORD_KEY,
-    BOOTSTRAP_TOKEN_KEY,
     CLUSTER_RELATION,
     DATABASE_RELATION,
     GRAFANA_RELATION_NAME,
@@ -36,7 +34,6 @@ from constants import (
     PEBBLE_READY_CHECK_NAME,
     PEER_RELATION,
     PROMETHEUS_RELATION_NAME,
-    SECRET_KEY_KEY,
     SERVER_INFO_RELATION,
     TRACING_RELATION_NAME,
     WORKLOAD_CONTAINER,
@@ -197,14 +194,16 @@ class AuthentikServerCharm(ops.CharmBase):
             )
 
     def _ensure_secrets(self) -> bool:
-        """Generate all secrets (leader only)."""
+        """Generate the consolidated secret (leader only)."""
         if self._secrets.is_ready():
             return True
         if not self.unit.is_leader():
             return False
-        self._secrets[SECRET_KEY_LABEL] = {SECRET_KEY_KEY: token_urlsafe(50)}
-        self._secrets[BOOTSTRAP_TOKEN_LABEL] = {BOOTSTRAP_TOKEN_KEY: token_urlsafe(50)}
-        self._secrets[BOOTSTRAP_PASSWORD_LABEL] = {BOOTSTRAP_PASSWORD_KEY: token_urlsafe(32)}
+        self._secrets.create(
+            secret_key=token_urlsafe(50),
+            bootstrap_token=token_urlsafe(50),
+            bootstrap_password=token_urlsafe(32),
+        )
         return True
 
     def _ensure_cluster_relation(self) -> bool:
@@ -214,8 +213,10 @@ class AuthentikServerCharm(ops.CharmBase):
             and self._secrets.is_ready()
             and self.model.relations[CLUSTER_RELATION]
         ):
-            self.cluster_provider.set_secret_key(self._secrets.secret_key)
-            self.cluster_provider.set_server_version(self._workload_service.version)
+            self.cluster_provider.update_relations_app_data(
+                secret_key=self._secrets.secret_key,
+                server_version=self._workload_service.version,
+            )
         return True
 
     def _ensure_server_info_relation(self) -> bool:

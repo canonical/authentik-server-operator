@@ -15,7 +15,7 @@ In the `charmcraft.yaml` of the charm, add:
 provides:
   authentik-cluster:
     interface: authentik_cluster
-    optional: true
+    optional: false
 ```
 
 Then, to initialise the library:
@@ -31,7 +31,7 @@ class AuthentikServerCharm(CharmBase):
         )
 
     def _on_cluster_ready(self, event):
-        self.cluster_provider.set_secret_key(secret_key_value)
+        self.cluster_provider.update_relations_app_data(secret_key=secret_key_value)
 ```
 
 To use from the requirer side:
@@ -61,19 +61,22 @@ class AuthentikWorkerCharm(CharmBase):
 import logging
 from typing import Optional
 
-from ops import SecretNotFoundError
-from ops.charm import CharmBase, RelationChangedEvent, RelationCreatedEvent
-from ops.framework import EventBase, EventSource, Object, ObjectEvents
+from ops import ModelError, Secret, SecretNotFoundError
+from ops.charm import (
+    CharmBase,
+    RelationBrokenEvent,
+    RelationChangedEvent,
+    RelationCreatedEvent,
+    RelationEvent,
+)
+from ops.framework import EventSource, Object, ObjectEvents
+from pydantic import BaseModel, ValidationError
 
-# The unique Charmhub library identifier, never change it
-LIBID = "0000000000000000"
-
-# Increment this major API version when introducing breaking changes
+LIBID = "810ec184ec9e4c61aa18b3eef8e5e241"
 LIBAPI = 0
+LIBPATCH = 1
 
-# Increment this PATCH version before using `charmcraft publish-lib` or reset
-# to 0 if you are raising the major API version
-LIBPATCH = 3
+PYDEPS = ["pydantic"]
 
 RELATION_NAME = "authentik-cluster"
 INTERFACE_NAME = "authentik_cluster"
@@ -81,15 +84,21 @@ INTERFACE_NAME = "authentik_cluster"
 logger = logging.getLogger(__name__)
 
 
-class AuthentikClusterReadyEvent(EventBase):
+class ProviderData(BaseModel):
+    """Data published by the authentik-server into the cluster relation databag."""
+
+    secret_key_secret_id: str
+    server_version: str = ""
+
+class AuthentikClusterReadyEvent(RelationEvent):
     """Event emitted when the cluster relation is ready."""
 
 
-class AuthentikClusterChangedEvent(EventBase):
+class AuthentikClusterChangedEvent(RelationEvent):
     """Event emitted when cluster relation data changes."""
 
 
-class AuthentikClusterRemovedEvent(EventBase):
+class AuthentikClusterRemovedEvent(RelationEvent):
     """Event emitted when the cluster relation is removed."""
 
 
@@ -120,58 +129,85 @@ class AuthentikClusterProvider(Object):
         super().__init__(charm, relation_name)
         self._charm = charm
         self._relation_name = relation_name
-        self._secret = None
 
         self.framework.observe(
             self._charm.on[relation_name].relation_created,
             self._on_relation_created,
         )
+        self.framework.observe(
+            self._charm.on[relation_name].relation_broken,
+            self._on_relation_broken,
+        )
 
     def _on_relation_created(self, event: RelationCreatedEvent) -> None:
-        self.on.ready.emit()
+        self.on.ready.emit(event.relation)
 
-    def set_secret_key(self, secret_key: str) -> None:
-        """Store the secret key and publish to all related apps.
-
-        - Creates an app-owned Juju secret on first call
-        - Grants the secret to each related worker app
-        - Writes secret_key_secret_id to provider app databag
-        - Idempotent: safe to call multiple times
-        """
+    def _on_relation_broken(self, event: RelationBrokenEvent) -> None:
         if not self._charm.unit.is_leader():
             return
 
-        if self._secret is None:
+        relations = self._charm.model.relations.get(self._relation_name, [])
+        remaining_relations = [rel for rel in relations if rel.id != event.relation.id]
+        if remaining_relations:
             try:
-                self._secret = self._charm.model.get_secret(label="authentik-secret-key")
+                secret = self._charm.model.get_secret(label="authentik-secret-key")
+                secret.revoke(event.relation)
             except SecretNotFoundError:
-                self._secret = self._charm.app.add_secret(
-                    {"secret-key": secret_key}, label="authentik-secret-key"
-                )
+                pass
+        else:
+            self._delete_secret()
 
-        self._secret.set_content({"secret-key": secret_key})
+    def _create_or_update_secret(self, secret_key: str) -> Secret:
+        """Create or update the app-owned Juju secret for the cluster secret key."""
+        content = {"secret-key": secret_key}
+        try:
+            secret = self._charm.model.get_secret(label="authentik-secret-key")
+            if secret.get_content().get("secret-key") != secret_key:
+                secret.set_content(content)
+        except SecretNotFoundError:
+            secret = self._charm.app.add_secret(content, label="authentik-secret-key")
+        return secret
 
-        for relation in self._charm.model.relations.get(self._relation_name, []):
-            self._secret.grant(relation)
-            relation.data[self._charm.app]["secret_key_secret_id"] = self._secret.id
+    def _delete_secret(self) -> None:
+        """Remove all revisions of the cluster secret key secret, if it exists."""
+        if not self._charm.unit.is_leader():
+            return
+        try:
+            secret = self._charm.model.get_secret(label="authentik-secret-key")
+        except SecretNotFoundError:
+            return
+        secret.remove_all_revisions()
 
-    def set_server_version(self, version: str) -> None:
-        """Publish the server's workload version to all related workers.
+    def update_relations_app_data(self, secret_key: str, server_version: str = "") -> None:
+        """Store the secret key and publish provider data to all related workers.
 
-        Workers read this and block if their own version doesn't match,
-        preventing schema mismatches after upgrades.
+        - Creates an app-owned Juju secret for the secret key on first call
+        - Grants the secret to each related worker app
+        - Writes ProviderData (secret_key_secret_id, server_version) to each databag
+        - Idempotent: safe to call multiple times
 
         Args:
-            version: The authentik workload version string (e.g. "2026.5.3").
+            secret_key: The AUTHENTIK_SECRET_KEY value to share.
+            server_version: The authentik workload version string (e.g. "2026.5.3").
         """
         if not self._charm.unit.is_leader():
             return
+
+        secret = self._create_or_update_secret(secret_key)
+        data = ProviderData(secret_key_secret_id=secret.id, server_version=server_version)
         for relation in self._charm.model.relations.get(self._relation_name, []):
-            relation.data[self._charm.app]["server_version"] = version
+            secret.grant(relation)
+            relation.data[self._charm.app].update(data.model_dump())
 
     def is_ready(self) -> bool:
-        """True if the secret key has been set and published."""
-        return self._secret is not None
+        """True if the secret key has been created and published to all relations."""
+        relations = self._charm.model.relations.get(self._relation_name, [])
+        if not relations:
+            return False
+        for relation in relations:
+            if not relation.data[self._charm.app].get("secret_key_secret_id"):
+                return False
+        return True
 
 
 class AuthentikClusterRequirer(Object):
@@ -203,34 +239,50 @@ class AuthentikClusterRequirer(Object):
             return
         if not event.relation.data.get(event.relation.app):
             return
-        self.on.cluster_changed.emit()
+        self.on.cluster_changed.emit(event.relation)
 
-    def _on_relation_broken(self, event: RelationCreatedEvent) -> None:
-        self.on.cluster_removed.emit()
+    def _on_relation_broken(self, event: RelationBrokenEvent) -> None:
+        self.on.cluster_removed.emit(event.relation)
 
-    def get_secret_key(self) -> Optional[str]:
-        """Retrieve AUTHENTIK_SECRET_KEY from the Juju secret.
-
-        Reads secret_key_secret_id from provider app databag,
-        fetches the granted secret, returns value.
-        Returns None if relation missing or secret not yet available.
-        """
+    def get_provider_data(self) -> Optional[ProviderData]:
+        """Return parsed ProviderData, or None if unavailable or invalid."""
         relation = self._charm.model.get_relation(self._relation_name)
         if not relation or not relation.app:
             return None
-        secret_id = relation.data[relation.app].get("secret_key_secret_id")
-        if not secret_id:
+        raw = dict(relation.data[relation.app])
+        if not raw.get("secret_key_secret_id"):
             return None
-        secret = self._charm.model.get_secret(id=secret_id)
-        return secret.get_content()["secret-key"]
+        try:
+            return ProviderData(**raw)
+        except ValidationError:
+            logger.warning("Invalid data in authentik-cluster relation databag")
+            return None
+
+    def _get_secret(self, secret_id: str) -> Optional[Secret]:
+        """Fetch a secret by ID, returning None on any error."""
+        try:
+            return self._charm.model.get_secret(id=secret_id)
+        except (SecretNotFoundError, ModelError):
+            return None
+
+    def get_secret_key(self) -> Optional[str]:
+        """Retrieve AUTHENTIK_SECRET_KEY from the granted Juju secret.
+
+        Returns None if the relation is missing or the secret is not yet available.
+        """
+        data = self.get_provider_data()
+        if not data:
+            return None
+        secret = self._get_secret(data.secret_key_secret_id)
+        if not secret:
+            return None
+        return secret.get_content().get("secret-key")
 
     def get_server_version(self) -> Optional[str]:
         """Return the server's published workload version, or None if not yet set."""
-        relation = self._charm.model.get_relation(self._relation_name)
-        if not relation or not relation.app:
-            return None
-        return relation.data[relation.app].get("server_version")
+        data = self.get_provider_data()
+        return data.server_version if data and data.server_version else None
 
     def is_ready(self) -> bool:
-        """True if the secret key can be retrieved."""
-        return self.get_secret_key() is not None
+        """True if the relation exists and contains valid provider data."""
+        return self.get_provider_data() is not None

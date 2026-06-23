@@ -178,26 +178,14 @@ def server_info_relation() -> testing.Relation:
 # Secret fixtures
 # ---------------------------------------------------------------------------
 @pytest.fixture
-def secret_key_secret() -> testing.Secret:
+def authentik_secrets() -> testing.Secret:
     return testing.Secret(
-        tracked_content={"secret-key": "test-secret-key"},
-        label="authentik-server-secret-key",
-    )
-
-
-@pytest.fixture
-def bootstrap_token_secret() -> testing.Secret:
-    return testing.Secret(
-        tracked_content={"bootstrap-token": "test-bootstrap-token"},
-        label="authentik-server-bootstrap-token",
-    )
-
-
-@pytest.fixture
-def bootstrap_password_secret() -> testing.Secret:
-    return testing.Secret(
-        tracked_content={"bootstrap-password": "test-bootstrap-password"},
-        label="authentik-server-bootstrap-password",
+        tracked_content={
+            "secret-key": "test-secret-key",
+            "bootstrap-token": "test-bootstrap-token",
+            "bootstrap-password": "test-bootstrap-password",
+        },
+        label="authentik-server-secrets",
     )
 
 

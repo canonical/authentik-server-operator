@@ -130,7 +130,7 @@ class TestHolisticHandler:
         mocker: MockerFixture,
     ) -> None:
         mocker.patch("charm.Secrets.is_ready", return_value=False)
-        mocker.patch("charm.Secrets.__setitem__", side_effect=SecretError("fail"))
+        mocker.patch("charm.Secrets.create", side_effect=SecretError("fail"))
         state = create_state(
             relations=[db_relation, peer_relation, cluster_relation],
         )

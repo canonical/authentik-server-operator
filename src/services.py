@@ -7,7 +7,10 @@ import copy
 import logging
 
 from ops import Container, ModelError, Unit
-from ops.pebble import CheckStatus, Layer, LayerDict
+from ops.pebble import CheckStatus
+from ops.pebble import ConnectionError as PebbleConnectionError
+from ops.pebble import Error as PebbleExecError
+from ops.pebble import Layer, LayerDict
 
 from constants import (
     COMMAND,
@@ -77,14 +80,14 @@ class WorkloadService:
             )
             stdout, _ = proc.wait_output()
             return stdout.strip()
-        except Exception:
+        except PebbleExecError:
             return ""
 
     def set_version(self) -> None:
         """Set the workload version on the Juju unit."""
         try:
             self._unit.set_workload_version(self.version)
-        except Exception as e:
+        except PebbleExecError as e:
             logger.error("Failed to set workload version: %s", e)
 
     def open_port(self) -> None:
@@ -96,7 +99,7 @@ class WorkloadService:
         """Check if the workload service is running and healthy."""
         try:
             service = self._container.get_service(WORKLOAD_SERVICE)
-        except (ModelError, ConnectionError) as e:
+        except (ModelError, PebbleConnectionError) as e:
             logger.error("Failed to get pebble service: %s", e)
             return False
         if not service.is_running():
@@ -110,7 +113,7 @@ class WorkloadService:
         """Check if the workload service health check is failing."""
         try:
             service = self._container.get_service(WORKLOAD_SERVICE)
-        except (ModelError, ConnectionError):
+        except (ModelError, PebbleConnectionError):
             return False
         if not service.is_running():
             return False

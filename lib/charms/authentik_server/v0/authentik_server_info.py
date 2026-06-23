@@ -32,7 +32,7 @@ class AuthentikServerCharm(CharmBase):
         )
 
     def _on_server_info_ready(self, event):
-        self.server_info_provider.set_server_info(
+        self.server_info_provider.update_relations_app_data(
             authentik_host="http://authentik-server:9000",
             bootstrap_token=token_value,
             bootstrap_password=password_value,
@@ -66,18 +66,22 @@ class AuthentikLdapOutpostCharm(CharmBase):
 import logging
 from typing import Optional
 
-from ops.charm import CharmBase, RelationBrokenEvent, RelationChangedEvent, RelationCreatedEvent
-from ops.framework import EventBase, EventSource, Object, ObjectEvents
+from ops import ModelError, Secret, SecretNotFoundError
+from ops.charm import (
+    CharmBase,
+    RelationBrokenEvent,
+    RelationChangedEvent,
+    RelationCreatedEvent,
+    RelationEvent,
+)
+from ops.framework import EventSource, Object, ObjectEvents
+from pydantic import BaseModel, ValidationError
 
-# The unique Charmhub library identifier, never change it
-LIBID = "0000000000000000"
-
-# Increment this major API version when introducing breaking changes
+LIBID = "786e915b50384bbdaf17fa871eb6202f"
 LIBAPI = 0
+LIBPATCH = 3
 
-# Increment this PATCH version before using `charmcraft publish-lib` or reset
-# to 0 if you are raising the major API version
-LIBPATCH = 2
+PYDEPS = ["pydantic"]
 
 RELATION_NAME = "authentik-server-info"
 INTERFACE_NAME = "authentik_server_info"
@@ -85,15 +89,22 @@ INTERFACE_NAME = "authentik_server_info"
 logger = logging.getLogger(__name__)
 
 
-class AuthentikServerInfoReadyEvent(EventBase):
+class ProviderData(BaseModel):
+    """Data published by the authentik-server into the server-info relation databag."""
+
+    authentik_host: str
+    authentik_token_secret_id: str
+    bootstrap_password_secret_id: str
+
+class AuthentikServerInfoReadyEvent(RelationEvent):
     """Event emitted when the provider populates the relation with info."""
 
 
-class AuthentikServerInfoChangedEvent(EventBase):
+class AuthentikServerInfoChangedEvent(RelationEvent):
     """Event emitted when server-info relation data changes."""
 
 
-class AuthentikServerInfoRemovedEvent(EventBase):
+class AuthentikServerInfoRemovedEvent(RelationEvent):
     """Event emitted when the server-info relation is removed."""
 
 
@@ -124,64 +135,108 @@ class AuthentikServerInfoProvider(Object):
         super().__init__(charm, relation_name)
         self._relation_name = relation_name
         self._charm = charm
-        self._token_secret = None
-        self._password_secret = None
 
         self.framework.observe(
             self._charm.on[relation_name].relation_created,
             self._on_relation_created,
         )
+        self.framework.observe(
+            self._charm.on[relation_name].relation_broken,
+            self._on_relation_broken,
+        )
 
     def _on_relation_created(self, event: RelationCreatedEvent) -> None:
-        self.on.ready.emit()
+        self.on.ready.emit(event.relation)
 
-    def set_server_info(
+    def _on_relation_broken(self, event: RelationBrokenEvent) -> None:
+        if not self._charm.unit.is_leader():
+            return
+
+        relations = self._charm.model.relations.get(self._relation_name, [])
+        remaining_relations = [rel for rel in relations if rel.id != event.relation.id]
+        if remaining_relations:
+            for label in ("authentik-bootstrap-token", "authentik-bootstrap-password"):
+                try:
+                    secret = self._charm.model.get_secret(label=label)
+                    secret.revoke(event.relation)
+                except SecretNotFoundError:
+                    pass
+        else:
+            self._delete_secrets()
+
+    def _create_or_update_secret(self, label: str, key: str, value: str) -> Secret:
+        """Create or update a single app-owned Juju secret, returning it."""
+        content = {key: value}
+        try:
+            secret = self._charm.model.get_secret(label=label)
+            if secret.get_content().get(key) != value:
+                secret.set_content(content)
+        except SecretNotFoundError:
+            secret = self._charm.app.add_secret(content, label=label)
+        return secret
+
+    def _delete_secrets(self) -> None:
+        """Remove all revisions of the bootstrap secrets, if they exist."""
+        if not self._charm.unit.is_leader():
+            return
+        for label in ("authentik-bootstrap-token", "authentik-bootstrap-password"):
+            try:
+                secret = self._charm.model.get_secret(label=label)
+            except SecretNotFoundError:
+                continue
+            secret.remove_all_revisions()
+
+    def update_relations_app_data(
         self,
         authentik_host: str,
         bootstrap_token: str,
         bootstrap_password: str,
     ) -> None:
-        """Store connection info in Juju secrets and publish to all relations.
+        """Store connection info in Juju secrets and publish ProviderData to all relations.
 
         - Creates two app-owned secrets (token, password) on first call
         - Grants both secrets to each related LDAP app
-        - Writes host + secret IDs to provider app databag
-        - Idempotent
+        - Writes ProviderData (host + secret IDs) to each relation databag
+        - Idempotent: safe to call multiple times
+
+        Args:
+            authentik_host: The Authentik server URL (e.g. "http://authentik-server:9000").
+            bootstrap_token: The bootstrap API token value.
+            bootstrap_password: The bootstrap admin password value.
         """
         if not self._charm.unit.is_leader():
             return
 
-        if self._token_secret is None:
-            self._token_secret = self._charm.app.add_secret(
-                {"bootstrap-token": bootstrap_token}, label="authentik-bootstrap-token"
-            )
-        else:
-            self._token_secret.set_content({"bootstrap-token": bootstrap_token})
-
-        if self._password_secret is None:
-            self._password_secret = self._charm.app.add_secret(
-                {"bootstrap-password": bootstrap_password}, label="authentik-bootstrap-password"
-            )
-        else:
-            self._password_secret.set_content({"bootstrap-password": bootstrap_password})
-
+        token_secret = self._create_or_update_secret(
+            "authentik-bootstrap-token", "bootstrap-token", bootstrap_token
+        )
+        password_secret = self._create_or_update_secret(
+            "authentik-bootstrap-password", "bootstrap-password", bootstrap_password
+        )
+        data = ProviderData(
+            authentik_host=authentik_host,
+            authentik_token_secret_id=token_secret.id,
+            bootstrap_password_secret_id=password_secret.id,
+        )
         for relation in self._charm.model.relations.get(self._relation_name, []):
-            self._token_secret.grant(relation)
-            self._password_secret.grant(relation)
-            relation.data[self._charm.app].update({
-                "authentik_host": authentik_host,
-                "authentik_token_secret_id": self._token_secret.id,
-                "bootstrap_password_secret_id": self._password_secret.id,
-            })
+            token_secret.grant(relation)
+            password_secret.grant(relation)
+            relation.data[self._charm.app].update(data.model_dump())
 
     def is_ready(self) -> bool:
-        """True if server info has been published."""
-        if not self._charm.unit.is_leader():
+        """True if server info has been published to all relations."""
+        relations = self._charm.model.relations.get(self._relation_name, [])
+        if not relations:
             return False
-        for relation in self._charm.model.relations.get(self._relation_name, []):
-            if relation.data[self._charm.app].get("authentik_host"):
-                return True
-        return False
+        for relation in relations:
+            data = relation.data[self._charm.app]
+            if not (
+                data.get("authentik_host")
+                and data.get("authentik_token_secret_id")
+                and data.get("bootstrap_password_secret_id")
+            ):
+                return False
+        return True
 
 
 class AuthentikServerInfoRequirer(Object):
@@ -213,44 +268,61 @@ class AuthentikServerInfoRequirer(Object):
             return
         if not event.relation.data.get(event.relation.app):
             return
-        self.on.info_changed.emit()
+        self.on.info_changed.emit(event.relation)
 
     def _on_relation_broken(self, event: RelationBrokenEvent) -> None:
-        self.on.info_removed.emit()
+        self.on.info_removed.emit(event.relation)
 
-    def get_authentik_host(self) -> Optional[str]:
-        """Return the Authentik server URL."""
+    def get_provider_data(self) -> Optional[ProviderData]:
+        """Return parsed ProviderData, or None if unavailable or invalid."""
         relation = self._charm.model.get_relation(self._relation_name)
         if not relation or not relation.app:
             return None
-        return relation.data[relation.app].get("authentik_host")
-
-    def get_authentik_token(self) -> Optional[str]:
-        """Retrieve bootstrap token from Juju secret."""
-        relation = self._charm.model.get_relation(self._relation_name)
-        if not relation or not relation.app:
+        raw = dict(relation.data[relation.app])
+        if not (
+            raw.get("authentik_host")
+            and raw.get("authentik_token_secret_id")
+            and raw.get("bootstrap_password_secret_id")
+        ):
             return None
-        secret_id = relation.data[relation.app].get("authentik_token_secret_id")
-        if not secret_id:
+        try:
+            return ProviderData(**raw)
+        except ValidationError:
+            logger.warning("Invalid data in authentik-server-info relation databag")
             return None
-        secret = self._charm.model.get_secret(id=secret_id)
-        return secret.get_content()["bootstrap-token"]
-
-    def get_bootstrap_password(self) -> Optional[str]:
-        """Retrieve bootstrap password from Juju secret."""
-        relation = self._charm.model.get_relation(self._relation_name)
-        if not relation or not relation.app:
-            return None
-        secret_id = relation.data[relation.app].get("bootstrap_password_secret_id")
-        if not secret_id:
-            return None
-        secret = self._charm.model.get_secret(id=secret_id)
-        return secret.get_content()["bootstrap-password"]
 
     def is_ready(self) -> bool:
-        """True if all 3 fields (host, token, password) are available."""
-        return (
-            self.get_authentik_host() is not None
-            and self.get_authentik_token() is not None
-            and self.get_bootstrap_password() is not None
-        )
+        """True if the relation exists and contains valid provider data."""
+        return self.get_provider_data() is not None
+
+    def get_authentik_host(self) -> Optional[str]:
+        """Return the Authentik server URL, or None if unavailable."""
+        data = self.get_provider_data()
+        return data.authentik_host if data else None
+
+    def _get_secret(self, secret_id: str) -> Optional[Secret]:
+        """Fetch a secret by ID, returning None on any error."""
+        try:
+            return self._charm.model.get_secret(id=secret_id)
+        except (SecretNotFoundError, ModelError):
+            return None
+
+    def get_authentik_token(self) -> Optional[str]:
+        """Retrieve the bootstrap token from the granted Juju secret."""
+        data = self.get_provider_data()
+        if not data:
+            return None
+        secret = self._get_secret(data.authentik_token_secret_id)
+        if not secret:
+            return None
+        return secret.get_content().get("bootstrap-token")
+
+    def get_bootstrap_password(self) -> Optional[str]:
+        """Retrieve the bootstrap password from the granted Juju secret."""
+        data = self.get_provider_data()
+        if not data:
+            return None
+        secret = self._get_secret(data.bootstrap_password_secret_id)
+        if not secret:
+            return None
+        return secret.get_content().get("bootstrap-password")
