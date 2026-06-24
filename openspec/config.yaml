@@ -19,7 +19,7 @@ context: |
   Juju app secrets, IDs kept in the peer app databag.
 
   Charm libraries in lib/charms/ are read-only (managed by charmcraft).
-  Coding conventions and testing patterns are in .github/copilot-instructions.md.
+  Coding conventions and testing patterns are in AGENTS.md.
 
 rules:
   spec:

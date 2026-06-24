@@ -34,3 +34,10 @@ build/
 
 # OpenSpec archive
 openspec/changes/archive/
+
+# AI Agent runtimes
+.agent/
+.opencode/
+.agents/skills
+
+
