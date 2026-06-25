@@ -208,14 +208,21 @@ class AuthentikServerCharm(ops.CharmBase):
 
     def _ensure_cluster_relation(self) -> bool:
         """Ensure the cluster relation has up-to-date secret key and version data."""
-        if (
-            self.unit.is_leader()
-            and self._secrets.is_ready()
-            and self.model.relations[CLUSTER_RELATION]
-        ):
+        if not self.model.relations[CLUSTER_RELATION]:
+            return False
+        if self.unit.is_leader() and self._secrets.is_ready():
+            db_info = DatabaseConfig.load(self.database)
+            if not all([db_info.host, db_info.port, db_info.user, db_info.password, db_info.name]):
+                logger.info("Database configuration is not fully ready yet")
+                return False
             self.cluster_provider.update_relations_app_data(
                 secret_key=self._secrets.secret_key,
                 server_version=self._workload_service.version,
+                db_host=db_info.host,
+                db_port=db_info.port,
+                db_user=db_info.user,
+                db_password=db_info.password,
+                db_name=db_info.name,
             )
         return True
 

@@ -215,8 +215,8 @@ class AuthentikServerInfoProvider(Object):
         )
         data = ProviderData(
             authentik_host=authentik_host,
-            authentik_token_secret_id=token_secret.id,
-            bootstrap_password_secret_id=password_secret.id,
+            authentik_token_secret_id=token_secret.id or token_secret.get_info().id,
+            bootstrap_password_secret_id=password_secret.id or password_secret.get_info().id,
         )
         for relation in self._charm.model.relations.get(self._relation_name, []):
             token_secret.grant(relation)

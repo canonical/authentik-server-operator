@@ -70,7 +70,7 @@ from ops.charm import (
     RelationEvent,
 )
 from ops.framework import EventSource, Object, ObjectEvents
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 LIBID = "810ec184ec9e4c61aa18b3eef8e5e241"
 LIBAPI = 0
@@ -88,7 +88,14 @@ class ProviderData(BaseModel):
     """Data published by the authentik-server into the cluster relation databag."""
 
     secret_key_secret_id: str
+    db_host: str
+    db_port: str
+    db_user: str
+    db_name: str
     server_version: str = ""
+
+    secret_key: Optional[str] = Field(default=None, exclude=True)
+    db_password: Optional[str] = Field(default=None, exclude=True)
 
 class AuthentikClusterReadyEvent(RelationEvent):
     """Event emitted when the cluster relation is ready."""
@@ -157,12 +164,15 @@ class AuthentikClusterProvider(Object):
         else:
             self._delete_secret()
 
-    def _create_or_update_secret(self, secret_key: str) -> Secret:
+    def _create_or_update_secret(self, secret_key: str, db_password: Optional[str] = None) -> Secret:
         """Create or update the app-owned Juju secret for the cluster secret key."""
         content = {"secret-key": secret_key}
+        if db_password:
+            content["db-password"] = db_password
         try:
             secret = self._charm.model.get_secret(label="authentik-secret-key")
-            if secret.get_content().get("secret-key") != secret_key:
+            current_content = secret.get_content()
+            if any(current_content.get(k) != v for k, v in content.items()):
                 secret.set_content(content)
         except SecretNotFoundError:
             secret = self._charm.app.add_secret(content, label="authentik-secret-key")
@@ -178,26 +188,47 @@ class AuthentikClusterProvider(Object):
             return
         secret.remove_all_revisions()
 
-    def update_relations_app_data(self, secret_key: str, server_version: str = "") -> None:
+    def update_relations_app_data(
+        self,
+        secret_key: str,
+        db_host: str,
+        db_port: str,
+        db_user: str,
+        db_password: str,
+        db_name: str,
+        server_version: str = "",
+    ) -> None:
         """Store the secret key and publish provider data to all related workers.
 
         - Creates an app-owned Juju secret for the secret key on first call
         - Grants the secret to each related worker app
-        - Writes ProviderData (secret_key_secret_id, server_version) to each databag
+        - Writes ProviderData to each databag
         - Idempotent: safe to call multiple times
 
         Args:
             secret_key: The AUTHENTIK_SECRET_KEY value to share.
+            db_host: The database host.
+            db_port: The database port.
+            db_user: The database user.
+            db_password: The database password.
+            db_name: The database name.
             server_version: The authentik workload version string (e.g. "2026.5.3").
         """
         if not self._charm.unit.is_leader():
             return
 
-        secret = self._create_or_update_secret(secret_key)
-        data = ProviderData(secret_key_secret_id=secret.id, server_version=server_version)
+        secret = self._create_or_update_secret(secret_key, db_password)
+        data = ProviderData(
+            secret_key_secret_id=secret.id or secret.get_info().id,
+            server_version=server_version,
+            db_host=db_host,
+            db_port=db_port,
+            db_user=db_user,
+            db_name=db_name,
+        )
         for relation in self._charm.model.relations.get(self._relation_name, []):
             secret.grant(relation)
-            relation.data[self._charm.app].update(data.model_dump())
+            relation.data[self._charm.app].update(data.model_dump(mode="json", exclude_none=True))
 
     def is_ready(self) -> bool:
         """True if the secret key has been created and published to all relations."""
@@ -245,7 +276,7 @@ class AuthentikClusterRequirer(Object):
         self.on.cluster_removed.emit(event.relation)
 
     def get_provider_data(self) -> Optional[ProviderData]:
-        """Return parsed ProviderData, or None if unavailable or invalid."""
+        """Return parsed ProviderData with resolved secrets, or None if unavailable or invalid."""
         relation = self._charm.model.get_relation(self._relation_name)
         if not relation or not relation.app:
             return None
@@ -253,10 +284,18 @@ class AuthentikClusterRequirer(Object):
         if not raw.get("secret_key_secret_id"):
             return None
         try:
-            return ProviderData(**raw)
+            data = ProviderData(**raw)
         except ValidationError:
             logger.warning("Invalid data in authentik-cluster relation databag")
             return None
+
+        secret = self._get_secret(data.secret_key_secret_id)
+        if secret:
+            content = secret.get_content(refresh=True)
+            data.secret_key = content.get("secret-key")
+            data.db_password = content.get("db-password")
+
+        return data
 
     def _get_secret(self, secret_id: str) -> Optional[Secret]:
         """Fetch a secret by ID, returning None on any error."""
@@ -266,22 +305,33 @@ class AuthentikClusterRequirer(Object):
             return None
 
     def get_secret_key(self) -> Optional[str]:
-        """Retrieve AUTHENTIK_SECRET_KEY from the granted Juju secret.
+        """Retrieve AUTHENTIK_SECRET_KEY from the resolved provider data.
 
         Returns None if the relation is missing or the secret is not yet available.
         """
         data = self.get_provider_data()
-        if not data:
-            return None
-        secret = self._get_secret(data.secret_key_secret_id)
-        if not secret:
-            return None
-        return secret.get_content().get("secret-key")
+        return data.secret_key if data else None
 
     def get_server_version(self) -> Optional[str]:
         """Return the server's published workload version, or None if not yet set."""
         data = self.get_provider_data()
         return data.server_version if data and data.server_version else None
+
+    def get_database_config(self) -> Optional[dict[str, str]]:
+        """Retrieve database configuration from the resolved provider data.
+
+        Returns None if database configuration is missing.
+        """
+        data = self.get_provider_data()
+        if not data or not all([data.db_host, data.db_port, data.db_user, data.db_password, data.db_name]):
+            return None
+        return {
+            "db-host": data.db_host,
+            "db-port": data.db_port,
+            "db-user": data.db_user,
+            "db-password": data.db_password,
+            "db-name": data.db_name,
+        }
 
     def is_ready(self) -> bool:
         """True if the relation exists and contains valid provider data."""

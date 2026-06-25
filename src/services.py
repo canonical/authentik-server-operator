@@ -42,7 +42,7 @@ PEBBLE_LAYER_DICT: LayerDict = {
         "alive": {
             "override": "replace",
             "level": "alive",
-            "threshold": 60,
+            "threshold": 10,
             "http": {
                 "url": HEALTH_CHECK_URL,
             },
@@ -50,7 +50,7 @@ PEBBLE_LAYER_DICT: LayerDict = {
         PEBBLE_READY_CHECK_NAME: {
             "override": "replace",
             "level": "ready",
-            "threshold": 60,
+            "threshold": 10,
             "http": {
                 "url": HEALTH_READY_URL,
             },
@@ -115,6 +115,14 @@ class WorkloadService:
             service = self._container.get_service(WORKLOAD_SERVICE)
         except (ModelError, PebbleConnectionError):
             return False
+        # service.current is typically an ops.pebble.ServiceStatus enum member.
+        # However, for newer or unmapped Pebble states (such as "backoff"), ops might fall back
+        # to a raw string instead of an enum. We handle this defensively using hasattr.
+        current_str = (
+            service.current.value if hasattr(service.current, "value") else service.current
+        )
+        if str(current_str).lower() in ("backoff", "error"):
+            return True
         if not service.is_running():
             return False
         c = self._container.get_checks().get(PEBBLE_READY_CHECK_NAME)

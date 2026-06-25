@@ -66,7 +66,13 @@ class _ClusterProviderCharm(ops.CharmBase):
 
     def _on_ready(self, event: ops.EventBase) -> None:
         self.cluster_provider.update_relations_app_data(
-            secret_key="test-secret-key", server_version="2026.1.0"
+            secret_key="test-secret-key",
+            server_version="2026.1.0",
+            db_host="pg-host",
+            db_port="5432",
+            db_user="pg-user",
+            db_password="pg-password",
+            db_name="pg-db",
         )
 
 
@@ -158,10 +164,17 @@ class TestAuthentikClusterProvider:
 
         assert any(s.label == "authentik-secret-key" for s in state_out.secrets)
         secret = next(s for s in state_out.secrets if s.label == "authentik-secret-key")
-        assert secret.tracked_content == {"secret-key": "test-secret-key"}
+        assert secret.tracked_content == {
+            "secret-key": "test-secret-key",
+            "db-password": "pg-password",
+        }
         rel_out = state_out.get_relation(relation.id)
         assert "secret_key_secret_id" in rel_out.local_app_data
         assert rel_out.local_app_data.get("server_version") == "2026.1.0"
+        assert rel_out.local_app_data.get("db_host") == "pg-host"
+        assert rel_out.local_app_data.get("db_port") == "5432"
+        assert rel_out.local_app_data.get("db_user") == "pg-user"
+        assert rel_out.local_app_data.get("db_name") == "pg-db"
 
     def test_update_relations_app_data_noop_for_non_leader(self, context: testing.Context) -> None:
         relation = testing.Relation("authentik-cluster")
@@ -224,7 +237,12 @@ class TestAuthentikClusterRequirer:
 
     @pytest.fixture
     def cluster_secret(self) -> testing.Secret:
-        return testing.Secret(tracked_content={"secret-key": "test-secret-key"})
+        return testing.Secret(
+            tracked_content={
+                "secret-key": "test-secret-key",
+                "db-password": "pg-password",
+            }
+        )
 
     @pytest.fixture
     def cluster_relation(self, cluster_secret: testing.Secret) -> testing.Relation:
@@ -233,6 +251,10 @@ class TestAuthentikClusterRequirer:
             remote_app_data={
                 "secret_key_secret_id": cluster_secret.id,
                 "server_version": "2026.1.0",
+                "db_host": "pg-host",
+                "db_port": "5432",
+                "db_user": "pg-user",
+                "db_name": "pg-db",
             },
         )
 
@@ -302,6 +324,56 @@ class TestAuthentikClusterRequirer:
         state_out = context.run(context.on.config_changed(), state)
 
         assert state_out.unit_status == testing.WaitingStatus("not ready")
+
+    def test_get_database_config_returns_none_when_keys_missing(
+        self,
+        context: testing.Context,
+        cluster_secret: testing.Secret,
+    ) -> None:
+        relation = testing.Relation(
+            "authentik-cluster",
+            remote_app_data={
+                "secret_key_secret_id": cluster_secret.id,
+                "server_version": "2026.1.0",
+            },
+        )
+        state = testing.State(leader=False, relations=[relation], secrets=[cluster_secret])
+        with context(context.on.relation_changed(relation), state) as mgr:
+            db_config = mgr.charm.cluster.get_database_config()
+        assert db_config is None
+
+    def test_get_database_config_returns_dict_when_keys_present(
+        self,
+        context: testing.Context,
+        cluster_relation: testing.Relation,
+    ) -> None:
+        secret = testing.Secret(
+            tracked_content={
+                "secret-key": "test-secret-key",
+                "db-password": "pg-password",
+            }
+        )
+        relation = testing.Relation(
+            "authentik-cluster",
+            remote_app_data={
+                "secret_key_secret_id": secret.id,
+                "server_version": "2026.1.0",
+                "db_host": "pg-host",
+                "db_port": "5432",
+                "db_user": "pg-user",
+                "db_name": "pg-db",
+            },
+        )
+        state = testing.State(leader=False, relations=[relation], secrets=[secret])
+        with context(context.on.relation_changed(relation), state) as mgr:
+            db_config = mgr.charm.cluster.get_database_config()
+        assert db_config == {
+            "db-host": "pg-host",
+            "db-port": "5432",
+            "db-user": "pg-user",
+            "db-password": "pg-password",
+            "db-name": "pg-db",
+        }
 
 
 # ---------------------------------------------------------------------------
