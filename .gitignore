@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+ENV/
+env/
+
+# Testing
+.tox/
+.coverage
+.cover/
+htmlcov/
+.pytest_cache/
+
+# Build artifacts
+*.charm
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Headroom
+.headroom/
+
+# AI Agent runtimes
+.agent/
+.opencode/
+.agents/skills
+
+

@@ -3,8 +3,9 @@
 
 """Charm configuration wrapper."""
 
-from env_vars import EnvVars
 from ops import ConfigData
+
+from env_vars import EnvVars
 
 
 class CharmConfig:
@@ -21,4 +22,12 @@ class CharmConfig:
         """Return charm-config-derived environment variables."""
         return {
             "AUTHENTIK_LOG_LEVEL": self._config.get("log_level", "info"),
+            "HTTP_PROXY": self._config.get("http_proxy") or "",
+            "HTTPS_PROXY": self._config.get("https_proxy") or "",
+            "NO_PROXY": self._config.get("no_proxy") or "",
+            "AUTHENTIK_WEB__WORKERS": str(self._config.get("web_workers", 2)),
         }
+
+    def get_missing_config_keys(self) -> list:
+        """Return a list of required config keys that are missing or empty."""
+        return []

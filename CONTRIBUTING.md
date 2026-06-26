@@ -70,7 +70,7 @@ juju model-config logging-config="<root>=INFO;unit=DEBUG"
 # Deploy postgresql-k8s charm
 juju deploy postgresql-k8s --channel edge --trust
 # Deploy the charm
-juju deploy ./authentik-server-service*.charm --resource oci-image=$(yq eval '.resources.oci-image.upstream-source' charmcraft.yaml)
+juju deploy ./authentik-server*.charm --resource oci-image=$(yq eval '.resources.oci-image.upstream-source' charmcraft.yaml)
 ```
 
 ## Canonical Contributor Agreement

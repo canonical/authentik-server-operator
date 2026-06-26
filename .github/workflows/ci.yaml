@@ -19,8 +19,10 @@ on:
 jobs:
   tests:
     name: CI
-    uses: canonical/identity-team/.github/workflows/charm-pull-request.yaml@59d4d2782bcb8fc2deea2aa08442e4c8603f2689 # v1.11.2
+    uses: canonical/identity-team/.github/workflows/charm-pull-request.yaml@v1.11.4
     with:
       container-name: "authentik-server"
       use-charmcraftcache: false
-      node-size: large
+      node-size: medium
+      pytest-model-option: '--juju-model'
+      juju-model-name: 'testing'
