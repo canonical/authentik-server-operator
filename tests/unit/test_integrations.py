@@ -7,9 +7,10 @@ from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
+from charms.smtp_integrator.v0.smtp import SmtpRequires
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 
-from integrations import DatabaseConfig, TracingData
+from integrations import DatabaseConfig, SmtpData, TracingData
 
 
 class TestDatabaseConfig:
@@ -101,3 +102,84 @@ class TestTracingData:
     def test_to_env_vars_ready_no_endpoint(self) -> None:
         data = TracingData(is_ready=True, endpoint="")
         assert data.to_env_vars() == {"OTEL_EXPORTER_OTLP_ENDPOINT": ""}
+
+
+class TestSmtpData:
+    @pytest.fixture
+    def mocked_requirer(self) -> MagicMock:
+        mocked = create_autospec(SmtpRequires)
+        return mocked
+
+    def test_load_empty(self, mocked_requirer: MagicMock) -> None:
+        mocked_requirer.get_relation_data.return_value = None
+        data = SmtpData.load(mocked_requirer)
+        assert data == SmtpData()
+        assert data.to_env_vars() == {}
+
+    def test_load_exception(self, mocked_requirer: MagicMock) -> None:
+        mocked_requirer.get_relation_data.side_effect = Exception("Some error")
+        data = SmtpData.load(mocked_requirer)
+        assert data == SmtpData()
+        assert data.to_env_vars() == {}
+
+    def test_load_and_to_env_vars_tls(self, mocked_requirer: MagicMock) -> None:
+        from charms.smtp_integrator.v0.smtp import AuthType, SmtpRelationData, TransportSecurity
+
+        relation_data = SmtpRelationData(
+            host="smtp.example.com",
+            port=587,
+            user="user",
+            password="password",
+            auth_type=AuthType.PLAIN,
+            transport_security=TransportSecurity.STARTTLS,
+            smtp_sender="sender@example.com",
+        )
+        mocked_requirer.get_relation_data.return_value = relation_data
+        data = SmtpData.load(mocked_requirer)
+        assert data.host == "smtp.example.com"
+        assert data.port == "587"
+        assert data.username == "user"
+        assert data.password == "password"
+        assert data.use_tls is True
+        assert data.use_ssl is False
+        assert data.from_address == "sender@example.com"
+
+        assert data.to_env_vars() == {
+            "AUTHENTIK_EMAIL__HOST": "smtp.example.com",
+            "AUTHENTIK_EMAIL__PORT": "587",
+            "AUTHENTIK_EMAIL__USERNAME": "user",
+            "AUTHENTIK_EMAIL__PASSWORD": "password",
+            "AUTHENTIK_EMAIL__USE_TLS": "true",
+            "AUTHENTIK_EMAIL__USE_SSL": "false",
+            "AUTHENTIK_EMAIL__FROM": "sender@example.com",
+        }
+
+    def test_load_and_to_env_vars_ssl(self, mocked_requirer: MagicMock) -> None:
+        from charms.smtp_integrator.v0.smtp import AuthType, SmtpRelationData, TransportSecurity
+
+        relation_data = SmtpRelationData(
+            host="smtp.example.com",
+            port=465,
+            user="user",
+            password="password",
+            auth_type=AuthType.PLAIN,
+            transport_security=TransportSecurity.TLS,
+        )
+        mocked_requirer.get_relation_data.return_value = relation_data
+        data = SmtpData.load(mocked_requirer)
+        assert data.host == "smtp.example.com"
+        assert data.port == "465"
+        assert data.username == "user"
+        assert data.password == "password"
+        assert data.use_tls is False
+        assert data.use_ssl is True
+        assert data.from_address == ""
+
+        assert data.to_env_vars() == {
+            "AUTHENTIK_EMAIL__HOST": "smtp.example.com",
+            "AUTHENTIK_EMAIL__PORT": "465",
+            "AUTHENTIK_EMAIL__USERNAME": "user",
+            "AUTHENTIK_EMAIL__PASSWORD": "password",
+            "AUTHENTIK_EMAIL__USE_TLS": "false",
+            "AUTHENTIK_EMAIL__USE_SSL": "true",
+        }

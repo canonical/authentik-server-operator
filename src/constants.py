@@ -15,6 +15,7 @@ HEALTH_READY_URL = f"http://localhost:{HTTP_PORT}/-/health/ready/"
 
 DATABASE_RELATION = "pg-database"
 INGRESS_RELATION = "ingress"
+SMTP_RELATION = "smtp"
 CLUSTER_RELATION = "authentik-cluster"
 SERVER_INFO_RELATION = "authentik-server-info"
 PEER_RELATION = "authentik-peers"
