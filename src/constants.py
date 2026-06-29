@@ -24,6 +24,7 @@ LOGGING_RELATION_NAME = "logging"
 PROMETHEUS_RELATION_NAME = "metrics-endpoint"
 GRAFANA_RELATION_NAME = "grafana-dashboard"
 TRACING_RELATION_NAME = "tracing"
+OAUTH_RELATION_NAME = "oauth"
 
 SECRET_KEY_KEY = "secret-key"
 BOOTSTRAP_TOKEN_KEY = "bootstrap-token"
@@ -31,6 +32,9 @@ BOOTSTRAP_PASSWORD_KEY = "bootstrap-password"
 
 SECRETS_LABEL = "authentik-server-secrets"
 SECRETS_PEER_KEY = "secrets_id"
+
+OAUTH_SYNC_CACHE_PEER_KEY = "oauth_sync_cache"
+AUTHORIZATION_FLOW_CACHE_PEER_KEY = "authorization_flow_cache"
 
 PEBBLE_READY_CHECK_NAME = "ready"
 

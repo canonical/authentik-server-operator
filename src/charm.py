@@ -5,6 +5,7 @@
 """Charm the Authentik server application."""
 
 import logging
+import re
 import subprocess
 from secrets import token_urlsafe
 
@@ -16,6 +17,7 @@ from charms.certificate_transfer_interface.v1.certificate_transfer import (
 )
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
+from charms.hydra.v0.oauth import CLIENT_SECRET_FIELD, OAuthProvider
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     K8sResourcePatchFailedEvent,
@@ -28,6 +30,7 @@ from charms.smtp_integrator.v0.smtp import SmtpRequires
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 
+from authentik_api import AuthentikAPI
 from configs import CharmConfig
 from constants import (
     CERTIFICATE_TRANSFER_INTEGRATION_NAME,
@@ -40,6 +43,7 @@ from constants import (
     LOCAL_CHARM_CERTIFICATES_FILE,
     LOCAL_CHARM_CERTIFICATES_PATH,
     LOGGING_RELATION_NAME,
+    OAUTH_RELATION_NAME,
     PEBBLE_READY_CHECK_NAME,
     PEER_RELATION,
     PROMETHEUS_RELATION_NAME,
@@ -65,6 +69,7 @@ from integrations import (
     TLSCertificates,
     TracingData,
 )
+from oauth import OauthReconciler
 from secret import Secrets
 from services import PebbleService, WorkloadService
 from utils import (
@@ -97,6 +102,7 @@ class AuthentikServerCharm(ops.CharmBase):
         )
         self.ingress = IngressPerAppRequirer(self, relation_name=INGRESS_RELATION, port=HTTP_PORT)
         self.smtp = SmtpRequires(self, relation_name=SMTP_RELATION)
+        self.oauth_provider = OAuthProvider(self, relation_name=OAUTH_RELATION_NAME)
 
         # Observability
         self._log_forwarder = LogForwarder(self, relation_name=LOGGING_RELATION_NAME)
@@ -172,6 +178,17 @@ class AuthentikServerCharm(ops.CharmBase):
         self.framework.observe(self.on[PEER_RELATION].relation_created, self._on_holistic_handler)
         self.framework.observe(self.on[PEER_RELATION].relation_changed, self._on_holistic_handler)
 
+        # OAuth Relation
+        self.framework.observe(
+            self.on[OAUTH_RELATION_NAME].relation_created, self._on_holistic_handler
+        )
+        self.framework.observe(
+            self.on[OAUTH_RELATION_NAME].relation_changed, self._on_holistic_handler
+        )
+        self.framework.observe(
+            self.on[OAUTH_RELATION_NAME].relation_broken, self._on_holistic_handler
+        )
+
         # Database broken
         self.framework.observe(
             self.on[DATABASE_RELATION].relation_broken, self._on_database_relation_broken
@@ -213,9 +230,10 @@ class AuthentikServerCharm(ops.CharmBase):
             self._ensure_cluster_relation,
             self._ensure_server_info_relation,
             self._ensure_tls,
+            self._ensure_oauth_relation,
         ]:
             try:
-                can_plan = can_plan and f()
+                can_plan = can_plan and f(event)
             except CharmError:
                 logger.exception("Error in %s", f.__name__)
                 can_plan = False
@@ -231,7 +249,7 @@ class AuthentikServerCharm(ops.CharmBase):
                 WORKLOAD_CONTAINER,
             )
 
-    def _ensure_secrets(self) -> bool:
+    def _ensure_secrets(self, event: ops.EventBase | None = None) -> bool:
         """Generate the consolidated secret (leader only)."""
         if self._secrets.is_ready():
             return True
@@ -244,7 +262,7 @@ class AuthentikServerCharm(ops.CharmBase):
         )
         return True
 
-    def _ensure_cluster_relation(self) -> bool:
+    def _ensure_cluster_relation(self, event: ops.EventBase | None = None) -> bool:
         """Ensure the cluster relation has up-to-date secret key and version data."""
         if not self.model.relations[CLUSTER_RELATION]:
             return False
@@ -264,7 +282,7 @@ class AuthentikServerCharm(ops.CharmBase):
             )
         return True
 
-    def _ensure_server_info_relation(self) -> bool:
+    def _ensure_server_info_relation(self, event: ops.EventBase | None = None) -> bool:
         """Ensure the server-info relation has up-to-date data."""
         if (
             self.unit.is_leader()
@@ -278,7 +296,7 @@ class AuthentikServerCharm(ops.CharmBase):
             )
         return True
 
-    def _ensure_tls(self) -> bool:
+    def _ensure_tls(self, event: ops.EventBase | None = None) -> bool:
         """Ensure TLS certificates are updated on both the charm and workload.
 
         Returns:
@@ -321,6 +339,73 @@ class AuthentikServerCharm(ops.CharmBase):
 
         self._tls_cert_changed = self._workload_service.update_ca_certs()
         return True
+
+    def _clean_slug(self, name: str) -> str:
+        """Sanitize an application/provider name to be a valid Authentik slug.
+
+        Slugs must only contain lowercase alphanumeric, hyphens, and underscores.
+        """
+        slug = name.lower()
+        slug = re.sub(r"[^a-z0-9_-]", "-", slug)
+        slug = re.sub(r"-+", "-", slug)
+        return slug.strip("-")
+
+    def _ensure_oauth_relation(self, event: ops.EventBase | None = None) -> bool:
+        """Ensure active oauth relations are registered in Authentik API and orphans deleted."""
+        if not self.unit.is_leader():
+            return True
+
+        api = AuthentikAPI(self._secrets.bootstrap_token)
+        if not api.is_service_available():
+            logger.info("Authentik API service is not available yet")
+            return True
+
+        relations = self.model.relations[OAUTH_RELATION_NAME]
+
+        is_broken_event = (
+            isinstance(event, ops.RelationBrokenEvent)
+            and event.relation.name == OAUTH_RELATION_NAME
+        )
+        broken_relation_id = event.relation.id if is_broken_event and event else None
+
+        active_relation_ids = {
+            relation.id for relation in relations if relation.id != broken_relation_id
+        }
+
+        reconciler = OauthReconciler(self, api)
+        reconciler.reconcile(active_relation_ids)
+        return True
+
+    def _get_or_generate_credentials(self, relation: ops.Relation) -> tuple[str, str]:
+        """Load or generate OIDC client credentials for a relation.
+
+        Args:
+            relation: The Juju relation object.
+
+        Returns:
+            A tuple of (client_id, client_secret).
+        """
+        client_id = relation.data[self.app].get("client_id")
+        client_secret = None
+        if client_id:
+            client_secret_id = relation.data[self.app].get("client_secret_id")
+            if client_secret_id:
+                try:
+                    secret_obj = self.oauth_provider.get_client_secret(client_secret_id)
+                    client_secret = secret_obj.get_content()[CLIENT_SECRET_FIELD]
+                except Exception as e:
+                    logger.warning("Failed to read existing secret %s: %s", client_secret_id, e)
+
+        if not client_id or not client_secret:
+            # Generate new secure credentials
+            client_id = token_urlsafe(16)
+            client_secret = token_urlsafe(32)
+            self.oauth_provider.set_client_credentials_in_relation_data(
+                relation.id, client_id, client_secret
+            )
+            logger.info("Generated new client credentials for relation %s", relation.id)
+
+        return client_id, client_secret
 
     @property
     def _authentik_host(self) -> str:
