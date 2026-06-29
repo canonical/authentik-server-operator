@@ -13,11 +13,13 @@ from ops.pebble import Error as PebbleExecError
 from ops.pebble import Layer, LayerDict
 
 from constants import (
+    CERTIFICATES_FILE,
     COMMAND,
     HEALTH_CHECK_URL,
     HEALTH_READY_URL,
     HTTP_PORT,
     HTTPS_PORT,
+    LOCAL_CERTIFICATES_FILE,
     PEBBLE_READY_CHECK_NAME,
     WORKLOAD_CONTAINER,
     WORKLOAD_SERVICE,
@@ -129,6 +131,23 @@ class WorkloadService:
         if not c:
             return False
         return c.status == CheckStatus.DOWN
+
+    def update_ca_certs(self) -> bool:
+        """Update the CA certificates in the workload container.
+
+        Returns:
+            True if the certificate bundle was updated, False if it was already current.
+        """
+        ca_certs = LOCAL_CERTIFICATES_FILE.read_text() if LOCAL_CERTIFICATES_FILE.exists() else ""
+        current = (
+            self._container.pull(CERTIFICATES_FILE).read()
+            if self._container.exists(CERTIFICATES_FILE)
+            else ""
+        )
+        if current == ca_certs:
+            return False
+        self._container.push(CERTIFICATES_FILE, ca_certs, make_dirs=True)
+        return True
 
 
 class PebbleService:

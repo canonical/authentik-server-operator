@@ -3,6 +3,8 @@
 
 """Constants for the Authentik server charm."""
 
+from pathlib import Path
+
 WORKLOAD_CONTAINER = "authentik"
 WORKLOAD_SERVICE = "authentik-server"
 COMMAND = "/lifecycle/ak server"
@@ -30,3 +32,13 @@ SECRETS_LABEL = "authentik-server-secrets"
 SECRETS_PEER_KEY = "secrets_id"
 
 PEBBLE_READY_CHECK_NAME = "ready"
+
+
+CERTIFICATE_TRANSFER_INTEGRATION_NAME = "receive-ca-cert"
+
+LOCAL_CERTIFICATES_PATH = Path("/tmp")
+LOCAL_CERTIFICATES_FILE = LOCAL_CERTIFICATES_PATH / "ca-certificates.crt"
+LOCAL_CHARM_CERTIFICATES_PATH = Path("/tmp/charm")
+LOCAL_CHARM_CERTIFICATES_FILE = LOCAL_CHARM_CERTIFICATES_PATH / "charm-certificates.crt"
+CERTIFICATES_PATH = Path("/etc/ssl/certs/")
+CERTIFICATES_FILE = CERTIFICATES_PATH / "ca-certificates.crt"

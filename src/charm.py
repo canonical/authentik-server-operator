@@ -5,11 +5,15 @@
 """Charm the Authentik server application."""
 
 import logging
+import subprocess
 from secrets import token_urlsafe
 
 import ops
 from charms.authentik_server.v0.authentik_cluster import AuthentikClusterProvider
 from charms.authentik_server.v0.authentik_server_info import AuthentikServerInfoProvider
+from charms.certificate_transfer_interface.v1.certificate_transfer import (
+    CertificateTransferRequires,
+)
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
@@ -25,11 +29,15 @@ from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 
 from configs import CharmConfig
 from constants import (
+    CERTIFICATE_TRANSFER_INTEGRATION_NAME,
     CLUSTER_RELATION,
     DATABASE_RELATION,
     GRAFANA_RELATION_NAME,
     HTTP_PORT,
     INGRESS_RELATION,
+    LOCAL_CERTIFICATES_PATH,
+    LOCAL_CHARM_CERTIFICATES_FILE,
+    LOCAL_CHARM_CERTIFICATES_PATH,
     LOGGING_RELATION_NAME,
     PEBBLE_READY_CHECK_NAME,
     PEER_RELATION,
@@ -43,6 +51,7 @@ from exceptions import CharmError, PebbleError
 from integrations import (
     DatabaseConfig,
     IngressData,
+    TLSCertificates,
     TracingData,
 )
 from secret import Secrets
@@ -99,6 +108,9 @@ class AuthentikServerCharm(ops.CharmBase):
             relation_name=TRACING_RELATION_NAME,
             protocols=["otlp_http"],
         )
+        self.certificate_transfer_requirer = CertificateTransferRequires(
+            self, CERTIFICATE_TRANSFER_INTEGRATION_NAME
+        )
 
         self._secrets = Secrets(self.model, self.model.get_relation(PEER_RELATION))
 
@@ -118,6 +130,16 @@ class AuthentikServerCharm(ops.CharmBase):
         self.framework.observe(self.ingress.on.revoked, self._on_holistic_handler)
         self.framework.observe(self.tracing.on.endpoint_changed, self._on_holistic_handler)
         self.framework.observe(self.tracing.on.endpoint_removed, self._on_holistic_handler)
+
+        # Certificate transfer events
+        self.framework.observe(
+            self.certificate_transfer_requirer.on.certificate_set_updated,
+            self._on_holistic_handler,
+        )
+        self.framework.observe(
+            self.certificate_transfer_requirer.on.certificates_removed,
+            self._on_holistic_handler,
+        )
 
         # Pebble events — dedicated handlers
         self.framework.observe(self.on.authentik_pebble_ready, self._on_pebble_ready)
@@ -170,11 +192,13 @@ class AuthentikServerCharm(ops.CharmBase):
         if not all(condition(self) for condition in NOOP_CONDITIONS):
             return
 
+        self._tls_cert_changed = False
         can_plan = True
         for f in [
             self._ensure_secrets,
             self._ensure_cluster_relation,
             self._ensure_server_info_relation,
+            self._ensure_tls,
         ]:
             try:
                 can_plan = can_plan and f()
@@ -186,7 +210,7 @@ class AuthentikServerCharm(ops.CharmBase):
             return
 
         try:
-            self._pebble.plan(self._pebble_layer)
+            self._pebble.plan(self._pebble_layer, force_restart=self._tls_cert_changed)
         except PebbleError:
             logger.error(
                 "Failed to plan pebble layer, please check the %s container logs",
@@ -238,6 +262,50 @@ class AuthentikServerCharm(ops.CharmBase):
                 bootstrap_token=self._secrets.bootstrap_token,
                 bootstrap_password=self._secrets.bootstrap_password,
             )
+        return True
+
+    def _ensure_tls(self) -> bool:
+        """Ensure TLS certificates are updated on both the charm and workload.
+
+        Returns:
+            True if TLS certificates were successfully ensured, False otherwise.
+        """
+        LOCAL_CHARM_CERTIFICATES_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        certificates = TLSCertificates.load(self.certificate_transfer_requirer).ca_bundle
+        existing = (
+            LOCAL_CHARM_CERTIFICATES_FILE.read_text()
+            if LOCAL_CHARM_CERTIFICATES_FILE.exists()
+            else ""
+        )
+
+        if certificates == existing:
+            return True
+
+        if certificates:
+            LOCAL_CHARM_CERTIFICATES_FILE.write_text(certificates)
+        else:
+            LOCAL_CHARM_CERTIFICATES_FILE.unlink(missing_ok=True)
+
+        try:
+            subprocess.run(
+                [
+                    "update-ca-certificates",
+                    "--fresh",
+                    "--etccertsdir",
+                    str(LOCAL_CERTIFICATES_PATH),
+                    "--localcertsdir",
+                    str(LOCAL_CHARM_CERTIFICATES_PATH),
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            logger.exception("Failed to update CA certificates")
+            # Remove the cert file so the next reconciliation retries the subprocess.
+            LOCAL_CHARM_CERTIFICATES_FILE.unlink(missing_ok=True)
+            return False
+
+        self._tls_cert_changed = self._workload_service.update_ca_certs()
         return True
 
     @property

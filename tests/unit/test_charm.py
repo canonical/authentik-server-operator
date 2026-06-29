@@ -426,3 +426,84 @@ class TestServerInfoRelationEvents:
         context.run(context.on.relation_created(server_info_relation), state)
 
         mocked_holistic_handler.assert_called_once()
+
+
+class TestCertificateEvents:
+    def test_on_certificate_changed(
+        self,
+        context: testing.Context,
+        certificate_transfer_relation: testing.Relation,
+        db_relation: testing.Relation,
+        cluster_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        authentik_secrets: testing.Secret,
+        mocked_subprocess_run: MagicMock,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        """Test that certificate changed event updates local certs and runs update-ca-certificates."""
+        mock_path = mocker.patch("charm.LOCAL_CHARM_CERTIFICATES_FILE")
+        mock_path.exists.return_value = False
+        mock_path.parent.mkdir.return_value = None
+
+        mock_tls = mocker.patch("charm.TLSCertificates")
+        mock_tls.load.return_value.ca_bundle = "some-ca-cert"
+
+        state = create_state(
+            relations=[
+                certificate_transfer_relation,
+                db_relation,
+                cluster_relation,
+                peer_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        context.run(context.on.relation_changed(certificate_transfer_relation), state)
+
+        mock_path.write_text.assert_called_with("some-ca-cert")
+        mocked_subprocess_run.assert_called()
+
+
+class TestTLSFailure:
+    def test_ensure_tls_subprocess_failure_blocks_plan(
+        self,
+        context: testing.Context,
+        certificate_transfer_relation: testing.Relation,
+        db_relation: testing.Relation,
+        cluster_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        authentik_secrets: testing.Secret,
+        mocked_subprocess_run: MagicMock,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        """Test that TLS subprocess failure unlinks cert and blocks pebble planning."""
+        import subprocess
+
+        mock_path = mocker.patch("charm.LOCAL_CHARM_CERTIFICATES_FILE")
+        mock_path.exists.return_value = False
+        mock_path.parent.mkdir.return_value = None
+
+        mock_tls = mocker.patch("charm.TLSCertificates")
+        mock_tls.load.return_value.ca_bundle = "new-ca-cert"
+
+        mocked_subprocess_run.side_effect = subprocess.CalledProcessError(
+            1, "update-ca-certificates"
+        )
+
+        state = create_state(
+            relations=[
+                certificate_transfer_relation,
+                db_relation,
+                cluster_relation,
+                peer_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        state_out = context.run(context.on.config_changed(), state)
+
+        mock_path.unlink.assert_called_with(missing_ok=True)
+        container_out = state_out.get_container(WORKLOAD_CONTAINER)
+        assert WORKLOAD_SERVICE not in container_out.layers
