@@ -111,6 +111,9 @@ provides:
   authentik-server-info:
     interface: authentik_server_info
     optional: true
+  oauth:
+    interface: oauth
+    optional: true
 
 peers:
   authentik-peers:
