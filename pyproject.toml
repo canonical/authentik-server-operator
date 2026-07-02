@@ -24,7 +24,7 @@ dependencies = [
 fmt = ["isort", "ruff"]
 lint = ["codespell", "isort", "ruff", "tomli"]
 unit = [
-    "ops[testing]>=3.0,<3.8.0",
+    "ops[testing]>=3.8,<3.9",
     # TODO: Unpin once frozenset bug in ops-scenario >= 8.8.0 / ops >= 3.8.0 is fixed upstream
     "ops-scenario<8.8.0",
     "pytest",
