@@ -7,10 +7,14 @@ import logging
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from charms.certificate_transfer_interface.v1.certificate_transfer import (
+    CertificateTransferRequires,
+)
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 
+from constants import CERTIFICATE_TRANSFER_INTEGRATION_NAME
 from env_vars import EnvVars
 
 logger = logging.getLogger(__name__)
@@ -96,3 +100,40 @@ class TracingData:
             return cls()
         endpoint = requirer.get_endpoint("otlp_http")
         return cls(is_ready=True, endpoint=endpoint or "")
+
+
+@dataclass(frozen=True, slots=True)
+class TLSCertificates:
+    """The data source from the certificate transfer integration."""
+
+    ca_bundle: str
+
+    @classmethod
+    def load(cls, requirer: CertificateTransferRequires) -> "TLSCertificates":
+        """Fetch the CA certificates from all receive-ca-cert integrations.
+
+        Args:
+            requirer: The CertificateTransferRequires integration.
+
+        Returns:
+            The loaded TLSCertificates.
+        """
+        # deal with v1 relations
+        ca_certs = requirer.get_all_certificates()
+
+        # deal with v0 relations
+        cert_transfer_integrations = requirer.charm.model.relations[
+            CERTIFICATE_TRANSFER_INTEGRATION_NAME
+        ]
+
+        for integration in cert_transfer_integrations:
+            ca = {
+                integration.data[unit]["ca"]
+                for unit in integration.units
+                if "ca" in integration.data.get(unit, {})
+            }
+            ca_certs.update(ca)
+
+        ca_bundle = "\n".join(sorted(ca_certs))
+
+        return cls(ca_bundle=ca_bundle)

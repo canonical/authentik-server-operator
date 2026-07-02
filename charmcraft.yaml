@@ -86,6 +86,13 @@ requires:
     interface: ingress
     optional: true
     limit: 1
+  receive-ca-cert:
+    interface: certificate_transfer
+    optional: true
+    description: |
+      Receive a CA cert.
+      This relation can be used with a local CA to obtain the CA cert that was used to sign proxied
+      endpoints.
 
 provides:
   metrics-endpoint:

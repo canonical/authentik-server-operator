@@ -306,3 +306,26 @@ def all_satisfied_conditions(
     mocked_workload_is_failing: MagicMock,
 ) -> None:
     pass
+
+
+@pytest.fixture
+def certificate_transfer_relation() -> testing.Relation:
+    """Fixture for certificate-transfer relation."""
+    return testing.Relation(
+        endpoint="receive-ca-cert",
+        interface="certificate_transfer",
+        remote_app_name="cert-authority",
+        remote_units_data={
+            0: {
+                "ca": "some-ca-cert",
+                "certificate": "some-cert",
+                "chain": "some-chain",
+            }
+        },
+    )
+
+
+@pytest.fixture
+def mocked_subprocess_run(mocker: MockerFixture) -> MagicMock:
+    """Fixture for mocking subprocess.run."""
+    return mocker.patch("charm.subprocess.run")
