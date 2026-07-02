@@ -23,6 +23,7 @@ LOGGING_RELATION_NAME = "logging"
 PROMETHEUS_RELATION_NAME = "metrics-endpoint"
 GRAFANA_RELATION_NAME = "grafana-dashboard"
 TRACING_RELATION_NAME = "tracing"
+OAUTH_RELATION_NAME = "oauth"
 
 SECRET_KEY_KEY = "secret-key"
 BOOTSTRAP_TOKEN_KEY = "bootstrap-token"
