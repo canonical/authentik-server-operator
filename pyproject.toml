@@ -26,7 +26,7 @@ lint = ["codespell", "isort", "ruff", "tomli"]
 unit = [
     "ops[testing]>=3.0,<3.8.0",
     # TODO: Unpin once frozenset bug in ops-scenario >= 8.8.0 / ops >= 3.8.0 is fixed upstream
-    "ops-scenario<8.8.0",
+    "ops-scenario<8.8.1",
     "pytest",
     "pytest-mock",
     "coverage[toml]",
