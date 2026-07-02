@@ -74,7 +74,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 LIBID = "810ec184ec9e4c61aa18b3eef8e5e241"
 LIBAPI = 0
-LIBPATCH = 1
+LIBPATCH = 2
 
 PYDEPS = ["pydantic"]
 
@@ -281,19 +281,27 @@ class AuthentikClusterRequirer(Object):
         if not relation or not relation.app:
             return None
         raw = dict(relation.data[relation.app])
-        if not raw.get("secret_key_secret_id"):
+        if not (secret_id := raw.get("secret_key_secret_id")):
             return None
+
+        secret = self._get_secret(secret_id)
+        if not secret:
+            return None
+
+        try:
+            content = secret.get_content(refresh=True)
+        except (SecretNotFoundError, ModelError) as e:
+            logger.warning("Failed to retrieve content for cluster secret: %s", e)
+            return None
+
+        raw["db_password"] = content.get("db-password")
+        raw["secret_key"] = content.get("secret-key")
+
         try:
             data = ProviderData(**raw)
         except ValidationError:
-            logger.warning("Invalid data in authentik-cluster relation databag")
+            logger.warning("Invalid data in authentik-cluster relation databag or secret")
             return None
-
-        secret = self._get_secret(data.secret_key_secret_id)
-        if secret:
-            content = secret.get_content(refresh=True)
-            data.secret_key = content.get("secret-key")
-            data.db_password = content.get("db-password")
 
         return data
 
