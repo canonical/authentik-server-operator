@@ -11,6 +11,7 @@ from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
 )
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
+from charms.smtp_integrator.v0.smtp import SmtpRequires, TransportSecurity
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 
@@ -137,3 +138,61 @@ class TLSCertificates:
         ca_bundle = "\n".join(sorted(ca_certs))
 
         return cls(ca_bundle=ca_bundle)
+
+
+@dataclass(frozen=True, slots=True)
+class SmtpData:
+    """The data source from the SMTP integration."""
+
+    host: str = ""
+    port: str = ""
+    username: str = ""
+    password: str = ""
+    use_tls: bool = False
+    use_ssl: bool = False
+    from_address: str = ""
+
+    def to_env_vars(self) -> EnvVars:
+        """Return SMTP environment variables."""
+        if not self.host:
+            return {}
+        env_vars: dict[str, str | bool] = {
+            "AUTHENTIK_EMAIL__HOST": self.host,
+            "AUTHENTIK_EMAIL__PORT": self.port,
+            "AUTHENTIK_EMAIL__USERNAME": self.username,
+            "AUTHENTIK_EMAIL__PASSWORD": self.password,
+            "AUTHENTIK_EMAIL__USE_TLS": "true" if self.use_tls else "false",
+            "AUTHENTIK_EMAIL__USE_SSL": "true" if self.use_ssl else "false",
+        }
+        if self.from_address:
+            env_vars["AUTHENTIK_EMAIL__FROM"] = self.from_address
+        return env_vars
+
+    @classmethod
+    def load(cls, requirer: SmtpRequires) -> "SmtpData":
+        """Load SMTP config from the relation."""
+        try:
+            relation_data = requirer.get_relation_data()
+        except Exception as e:
+            logger.error("Failed to load SMTP relation data: %s", e)
+            return cls()
+        if not relation_data:
+            return cls()
+
+        use_tls = False
+        use_ssl = False
+        transport_sec = relation_data.transport_security
+        if transport_sec == TransportSecurity.STARTTLS or transport_sec == "starttls":
+            use_tls = True
+        elif transport_sec == TransportSecurity.TLS or transport_sec == "tls":
+            use_ssl = True
+
+        return cls(
+            host=relation_data.host or "",
+            port=str(relation_data.port) if relation_data.port is not None else "",
+            username=relation_data.user or "",
+            password=relation_data.password or "",
+            use_tls=use_tls,
+            use_ssl=use_ssl,
+            from_address=relation_data.smtp_sender or "",
+        )

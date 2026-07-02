@@ -231,6 +231,24 @@ def grafana_dashboard_relation() -> testing.Relation:
     )
 
 
+@pytest.fixture
+def smtp_relation() -> testing.Relation:
+    return testing.Relation(
+        endpoint="smtp",
+        interface="smtp",
+        remote_app_name="smtp-integrator",
+        remote_app_data={
+            "host": "smtp.example.com",
+            "port": "587",
+            "user": "user",
+            "password": "password",
+            "auth_type": "plain",
+            "transport_security": "starttls",
+            "smtp_sender": "sender@example.com",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Charm service mocks
 # ---------------------------------------------------------------------------
