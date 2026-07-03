@@ -4,6 +4,7 @@
 """Integration tests for the Authentik Server charm."""
 
 import logging
+import platform
 from pathlib import Path
 from typing import Callable
 
@@ -37,6 +38,16 @@ logger = logging.getLogger(__name__)
 @pytest.mark.juju_setup
 def test_build_and_deploy(juju: jubilant.Juju, charm: Path) -> None:
     """Build and deploy the charm-under-test together with related charms."""
+    # Set model constraints dynamically based on native host architecture
+    arch_map = {
+        "aarch64": "arm64",
+        "arm64": "arm64",
+        "x86_64": "amd64",
+        "amd64": "amd64",
+    }
+    host_arch = arch_map.get(platform.machine().lower(), "amd64")
+    juju.cli("set-model-constraints", f"arch={host_arch}")
+
     juju.deploy(
         DB_APP,
         channel=DB_CHANNEL,
