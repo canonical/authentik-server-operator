@@ -30,7 +30,7 @@ jobs:
       contents: write
       issues: write
     name: Publish Charm
-    uses: canonical/identity-team/.github/workflows/charm-publish.yaml@59d4d2782bcb8fc2deea2aa08442e4c8603f2689 # v1.11.2
+    uses: canonical/identity-team/.github/workflows/charm-publish.yaml@b5070d98993fa72f429f4fdf8010f6f9a94eb4e0 # v1.14.2
     with:
       destination_channel: ${{ inputs.destination_channel}}
       source_branch: ${{ inputs.source_branch}}
