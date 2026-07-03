@@ -16,7 +16,7 @@ from constants import (
     WORKLOAD_CONTAINER,
     WORKLOAD_SERVICE,
 )
-from exceptions import SecretError
+from exceptions import SecretError, ServiceBackoffError, WorkloadNotRunningError
 
 _BASE_PLAN_WITH_CHECK: dict = {
     "checks": {
@@ -180,15 +180,15 @@ class TestCollectStatusEvent:
                 "waiting for secrets",
             ),
             (
-                "WorkloadService.is_failing",
-                True,
+                "WorkloadService.check_health",
+                ServiceBackoffError("Service is in backoff/error"),
                 testing.BlockedStatus,
                 f"failed to start the service, please check the "
                 f"{WORKLOAD_CONTAINER} container logs",
             ),
             (
-                "WorkloadService.is_running",
-                False,
+                "WorkloadService.check_health",
+                WorkloadNotRunningError("Service is not running"),
                 testing.WaitingStatus,
                 "waiting for the service to start",
             ),
@@ -214,7 +214,13 @@ class TestCollectStatusEvent:
     ) -> None:
         state = create_state(relations=[cluster_relation])
 
-        with patch(f"charm.{condition}", return_value=condition_value):
+        kwargs = {}
+        if isinstance(condition_value, Exception):
+            kwargs["side_effect"] = condition_value
+        else:
+            kwargs["return_value"] = condition_value
+
+        with patch(f"charm.{condition}", **kwargs):
             state_out = context.run(context.on.collect_unit_status(), state)
 
         assert isinstance(state_out.unit_status, status)
@@ -308,6 +314,52 @@ class TestIngressEvents:
         context.run(context.on.relation_broken(ingress_relation), state)
 
         mocked_holistic_handler.assert_called_once()
+
+
+class TestSmtpEvents:
+    def test_on_smtp_relation_changed(
+        self,
+        context: testing.Context,
+        mocked_holistic_handler: MagicMock,
+        smtp_relation: testing.Relation,
+    ) -> None:
+        state = create_state(relations=[smtp_relation])
+
+        context.run(context.on.relation_changed(smtp_relation), state)
+
+        mocked_holistic_handler.assert_called_once()
+
+    def test_smtp_variables_applied_to_pebble_layer(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        smtp_relation: testing.Relation,
+        all_satisfied_conditions: None,
+    ) -> None:
+        state = create_state(
+            relations=[db_relation, peer_relation, cluster_relation, smtp_relation],
+            secrets=[authentik_secrets],
+        )
+
+        state_out = context.run(context.on.config_changed(), state)
+
+        container = state_out.get_container(WORKLOAD_CONTAINER)
+        plan = container.plan.to_dict()
+        services = plan.get("services", {})
+        assert WORKLOAD_SERVICE in services
+        service = services[WORKLOAD_SERVICE]
+
+        env = service.get("environment", {})
+        assert env.get("AUTHENTIK_EMAIL__HOST") == "smtp.example.com"
+        assert env.get("AUTHENTIK_EMAIL__PORT") == "587"
+        assert env.get("AUTHENTIK_EMAIL__USERNAME") == "user"
+        assert env.get("AUTHENTIK_EMAIL__PASSWORD") == "password"
+        assert env.get("AUTHENTIK_EMAIL__USE_TLS") == "true"
+        assert env.get("AUTHENTIK_EMAIL__USE_SSL") == "false"
+        assert env.get("AUTHENTIK_EMAIL__FROM") == "sender@example.com"
 
 
 class TestPebbleCheckEvents:

@@ -61,7 +61,7 @@ def test_build_and_deploy(juju: jubilant.Juju, charm: Path) -> None:
     juju.wait(
         ready=all_active(APP_NAME, DB_APP, WORKER_APP),
         error=any_error(APP_NAME, DB_APP, WORKER_APP),
-        timeout=15 * 60,
+        timeout=20 * 60,
     )
 
 

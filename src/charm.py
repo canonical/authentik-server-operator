@@ -24,6 +24,7 @@ from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     adjust_resource_requirements,
 )
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
+from charms.smtp_integrator.v0.smtp import SmtpRequires
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 
@@ -43,14 +44,24 @@ from constants import (
     PEER_RELATION,
     PROMETHEUS_RELATION_NAME,
     SERVER_INFO_RELATION,
+    SMTP_RELATION,
     TRACING_RELATION_NAME,
     WORKLOAD_CONTAINER,
     WORKLOAD_SERVICE,
 )
-from exceptions import CharmError, PebbleError
+from exceptions import (
+    CharmError,
+    DatabaseConnectionError,
+    MigrationFailedError,
+    MigrationPendingError,
+    PebbleError,
+    ServiceBackoffError,
+    WorkloadNotRunningError,
+)
 from integrations import (
     DatabaseConfig,
     IngressData,
+    SmtpData,
     TLSCertificates,
     TracingData,
 )
@@ -85,6 +96,7 @@ class AuthentikServerCharm(ops.CharmBase):
             self, relation_name=SERVER_INFO_RELATION
         )
         self.ingress = IngressPerAppRequirer(self, relation_name=INGRESS_RELATION, port=HTTP_PORT)
+        self.smtp = SmtpRequires(self, relation_name=SMTP_RELATION)
 
         # Observability
         self._log_forwarder = LogForwarder(self, relation_name=LOGGING_RELATION_NAME)
@@ -128,6 +140,7 @@ class AuthentikServerCharm(ops.CharmBase):
         self.framework.observe(self.server_info_provider.on.ready, self._on_holistic_handler)
         self.framework.observe(self.ingress.on.ready, self._on_holistic_handler)
         self.framework.observe(self.ingress.on.revoked, self._on_holistic_handler)
+        self.framework.observe(self.smtp.on.smtp_data_available, self._on_holistic_handler)
         self.framework.observe(self.tracing.on.endpoint_changed, self._on_holistic_handler)
         self.framework.observe(self.tracing.on.endpoint_removed, self._on_holistic_handler)
 
@@ -180,6 +193,7 @@ class AuthentikServerCharm(ops.CharmBase):
             self._config,
             TracingData.load(self.tracing),
             IngressData.load(self.ingress),
+            SmtpData.load(self.smtp),
         )
 
     def _on_holistic_handler(self, event: ops.EventBase) -> None:
@@ -370,19 +384,33 @@ class AuthentikServerCharm(ops.CharmBase):
         if not self.model.relations[CLUSTER_RELATION]:
             event.add_status(ops.BlockedStatus("missing authentik-worker relation"))
 
-        if can_connect and self._workload_service.is_failing():
+        if can_connect:
+            self._collect_health_status(event)
+
+        event.add_status(self.resources_patch.get_status())
+        event.add_status(ops.ActiveStatus())
+
+    def _collect_health_status(self, event: ops.CollectStatusEvent) -> None:
+        """Collect status from workload health check."""
+        try:
+            self._workload_service.check_health()
+        except ServiceBackoffError:
             event.add_status(
                 ops.BlockedStatus(
                     f"failed to start the service, please check the "
                     f"{WORKLOAD_CONTAINER} container logs"
                 )
             )
-
-        if can_connect and not self._workload_service.is_running():
+        except DatabaseConnectionError:
+            event.add_status(
+                ops.BlockedStatus("database connection failed, please check credentials")
+            )
+        except MigrationPendingError:
+            event.add_status(ops.WaitingStatus("running database migrations"))
+        except MigrationFailedError as e:
+            event.add_status(ops.BlockedStatus(str(e)))
+        except WorkloadNotRunningError:
             event.add_status(ops.WaitingStatus("waiting for the service to start"))
-
-        event.add_status(self.resources_patch.get_status())
-        event.add_status(ops.ActiveStatus())
 
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         """Build resource requirements from charm config."""
