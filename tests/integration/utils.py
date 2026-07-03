@@ -12,9 +12,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 StatusPredicate = Callable[[jubilant.Status], bool]
 
 
-def get_unit_data(model: jubilant.Juju, unit_name: str) -> dict:
+def get_unit_data(juju: jubilant.Juju, unit_name: str) -> dict:
     """Get the data for a given unit."""
-    stdout = model.cli("show-unit", unit_name)
+    stdout = juju.cli("show-unit", unit_name)
     cmd_output = yaml.safe_load(stdout)
     return cmd_output[unit_name]
 
@@ -35,13 +35,13 @@ def get_integration_data(
 
 
 def get_app_integration_data(
-    model: jubilant.Juju,
+    juju: jubilant.Juju,
     app_name: str,
     integration_name: str,
     unit_num: int = 0,
 ) -> dict | None:
     """Get the application data for a given integration."""
-    data = get_integration_data(model, app_name, integration_name, unit_num)
+    data = get_integration_data(juju, app_name, integration_name, unit_num)
     return data["application-data"] if data else None
 
 

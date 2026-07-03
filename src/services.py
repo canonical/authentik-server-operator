@@ -12,6 +12,7 @@ from ops.pebble import ConnectionError as PebbleConnectionError
 from ops.pebble import Error as PebbleExecError
 from ops.pebble import Layer, LayerDict
 
+from cli import CommandLine
 from constants import (
     CERTIFICATES_FILE,
     COMMAND,
@@ -25,7 +26,11 @@ from constants import (
     WORKLOAD_SERVICE,
 )
 from env_vars import DEFAULT_SERVER_ENV, EnvVarConvertible
-from exceptions import PebbleError
+from exceptions import (
+    PebbleError,
+    ServiceBackoffError,
+    WorkloadNotRunningError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +49,10 @@ PEBBLE_LAYER_DICT: LayerDict = {
         "alive": {
             "override": "replace",
             "level": "alive",
-            "threshold": 10,
+            # A threshold of 10 attempts (at the standard 10s interval) provides 100 seconds
+            # of grace period for database migrations and service warmup during startup,
+            # preventing premature container restarts while maintaining reliable deadlock detection.
+            "threshold": 15,
             "http": {
                 "url": HEALTH_CHECK_URL,
             },
@@ -52,7 +60,8 @@ PEBBLE_LAYER_DICT: LayerDict = {
         PEBBLE_READY_CHECK_NAME: {
             "override": "replace",
             "level": "ready",
-            "threshold": 10,
+            "timeout": "10s",
+            "threshold": 3,
             "http": {
                 "url": HEALTH_READY_URL,
             },
@@ -67,23 +76,12 @@ class WorkloadService:
     def __init__(self, unit: Unit) -> None:
         self._unit = unit
         self._container: Container = unit.get_container(WORKLOAD_CONTAINER)
+        self._cli = CommandLine(self._container)
 
     @property
     def version(self) -> str:
         """The workload version via pebble exec."""
-        try:
-            proc = self._container.exec(
-                [
-                    "/ak-root/.venv/bin/python",
-                    "-c",
-                    "from authentik import VERSION; print(VERSION)",
-                ],
-                environment={"PYTHONPATH": "/"},
-            )
-            stdout, _ = proc.wait_output()
-            return stdout.strip()
-        except PebbleExecError:
-            return ""
+        return self._cli.get_version()
 
     def set_version(self) -> None:
         """Set the workload version on the Juju unit."""
@@ -106,10 +104,11 @@ class WorkloadService:
             return False
         if not service.is_running():
             return False
-        c = self._container.get_checks().get(PEBBLE_READY_CHECK_NAME)
-        if not c:
+        checks = self._container.get_checks()
+        ready_check = checks.get(PEBBLE_READY_CHECK_NAME)
+        if not ready_check:
             return False
-        return c.status == CheckStatus.UP
+        return ready_check.status == CheckStatus.UP and (ready_check.successes or 0) > 0
 
     def is_failing(self) -> bool:
         """Check if the workload service health check is failing."""
@@ -127,10 +126,46 @@ class WorkloadService:
             return True
         if not service.is_running():
             return False
-        c = self._container.get_checks().get(PEBBLE_READY_CHECK_NAME)
-        if not c:
+        checks = self._container.get_checks()
+        ready_check = checks.get(PEBBLE_READY_CHECK_NAME)
+        if not ready_check:
             return False
-        return c.status == CheckStatus.DOWN
+        return ready_check.status == CheckStatus.DOWN
+
+    def check_health(self) -> None:
+        """Validate health and run diagnostics, raising custom exceptions on failure.
+
+        Raises:
+            ServiceBackoffError: If the service is in backoff/error.
+            DatabaseConnectionError: If the database connection failed.
+            MigrationPendingError: If migrations are currently running.
+            MigrationFailedError: If database migration failed.
+            WorkloadNotRunningError: If the workload service is not running.
+        """
+        try:
+            service = self._container.get_service(WORKLOAD_SERVICE)
+        except (ModelError, PebbleConnectionError) as e:
+            raise WorkloadNotRunningError("Failed to connect to Pebble") from e
+
+        current_str = (
+            service.current.value if hasattr(service.current, "value") else service.current
+        )
+        if str(current_str).lower() in ("backoff", "error"):
+            raise ServiceBackoffError("Service is in backoff/error")
+
+        if not service.is_running():
+            raise WorkloadNotRunningError("Service is not running")
+
+        checks = self._container.get_checks()
+        ready_check = checks.get(PEBBLE_READY_CHECK_NAME)
+        if not ready_check:
+            raise WorkloadNotRunningError("Pebble ready check not found")
+
+        if ready_check.status == CheckStatus.DOWN:
+            self._cli.check_migrations()
+
+        if ready_check.status != CheckStatus.UP or (ready_check.successes or 0) == 0:
+            raise WorkloadNotRunningError("Service is starting up")
 
     def update_ca_certs(self) -> bool:
         """Update the CA certificates in the workload container.

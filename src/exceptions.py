@@ -14,3 +14,23 @@ class PebbleError(CharmError):
 
 class SecretError(CharmError):
     """Error for secret-related operations."""
+
+
+class WorkloadNotRunningError(CharmError):
+    """The workload service is not running."""
+
+
+class ServiceBackoffError(CharmError):
+    """The workload service is in backoff or error state."""
+
+
+class DatabaseConnectionError(CharmError):
+    """Database connection failed."""
+
+
+class MigrationPendingError(CharmError):
+    """Database migrations are currently running."""
+
+
+class MigrationFailedError(CharmError):
+    """Database migrations failed."""

@@ -16,7 +16,7 @@ from constants import (
     WORKLOAD_CONTAINER,
     WORKLOAD_SERVICE,
 )
-from exceptions import SecretError
+from exceptions import SecretError, ServiceBackoffError, WorkloadNotRunningError
 
 _BASE_PLAN_WITH_CHECK: dict = {
     "checks": {
@@ -180,15 +180,15 @@ class TestCollectStatusEvent:
                 "waiting for secrets",
             ),
             (
-                "WorkloadService.is_failing",
-                True,
+                "WorkloadService.check_health",
+                ServiceBackoffError("Service is in backoff/error"),
                 testing.BlockedStatus,
                 f"failed to start the service, please check the "
                 f"{WORKLOAD_CONTAINER} container logs",
             ),
             (
-                "WorkloadService.is_running",
-                False,
+                "WorkloadService.check_health",
+                WorkloadNotRunningError("Service is not running"),
                 testing.WaitingStatus,
                 "waiting for the service to start",
             ),
@@ -214,7 +214,13 @@ class TestCollectStatusEvent:
     ) -> None:
         state = create_state(relations=[cluster_relation])
 
-        with patch(f"charm.{condition}", return_value=condition_value):
+        kwargs = {}
+        if isinstance(condition_value, Exception):
+            kwargs["side_effect"] = condition_value
+        else:
+            kwargs["return_value"] = condition_value
+
+        with patch(f"charm.{condition}", **kwargs):
             state_out = context.run(context.on.collect_unit_status(), state)
 
         assert isinstance(state_out.unit_status, status)

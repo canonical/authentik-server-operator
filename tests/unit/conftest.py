@@ -314,6 +314,11 @@ def mocked_workload_is_failing(mocker: MockerFixture) -> MagicMock:
 
 
 @pytest.fixture
+def mocked_workload_check_health(mocker: MockerFixture) -> MagicMock:
+    return mocker.patch("charm.WorkloadService.check_health", return_value=None)
+
+
+@pytest.fixture
 def all_satisfied_conditions(
     mocked_container_connectivity: MagicMock,
     mocked_get_missing_config_keys: MagicMock,
@@ -322,6 +327,7 @@ def all_satisfied_conditions(
     mocked_secrets_is_ready: MagicMock,
     mocked_workload_is_running: MagicMock,
     mocked_workload_is_failing: MagicMock,
+    mocked_workload_check_health: MagicMock,
 ) -> None:
     pass
 
