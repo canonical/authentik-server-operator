@@ -14,6 +14,19 @@ DEFAULT_SERVER_ENV: dict[str, str | bool] = {
     # The rock's pebble service definition sets this PATH but Juju replaces that
     # layer entirely, so the charm must redeclare it here.
     "PATH": "/lifecycle:/ak-root/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    # Prevent Python from writing .pyc files
+    "PYTHONDONTWRITEBYTECODE": "1",
+    # Ensure stdout/stderr are unbuffered to stream logs in real-time
+    "PYTHONUNBUFFERED": "1",
+    # PYTHONPATH pointing to / where authentik is located
+    "PYTHONPATH": "/",
+    # Virtualenv path indicators
+    "VIRTUAL_ENV": "/ak-root/.venv",
+    "VENV_PATH": "/ak-root/.venv",
+    # Signal to Authentik that it is running in a container
+    "AK_RUNNING_IN_CONTAINER": "true",
+    # Enable FIPS mode in Go if supported
+    "GOFIPS": "1",
     # PostgreSQL — populated by DatabaseConfig
     "AUTHENTIK_POSTGRESQL__HOST": "",
     "AUTHENTIK_POSTGRESQL__PORT": "",
