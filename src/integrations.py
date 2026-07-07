@@ -3,10 +3,13 @@
 
 """Wrappers for charm relation data, implementing EnvVarConvertible."""
 
+import json
 import logging
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 
+import ops
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
     CertificateTransferRequires,
 )
@@ -15,7 +18,10 @@ from charms.smtp_integrator.v0.smtp import SmtpRequires, TransportSecurity
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
 
-from constants import CERTIFICATE_TRANSFER_INTEGRATION_NAME
+from constants import (
+    CERTIFICATE_TRANSFER_INTEGRATION_NAME,
+    PEER_RELATION,
+)
 from env_vars import EnvVars
 
 logger = logging.getLogger(__name__)
@@ -196,3 +202,62 @@ class SmtpData:
             use_ssl=use_ssl,
             from_address=relation_data.smtp_sender or "",
         )
+
+
+class PeerData:
+    """Access peer relation app-level data.
+
+    Only app-level data is used; unit-level data is intentionally left empty.
+    The leader unit is the sole writer; all units read.
+    """
+
+    def __init__(self, model: "ops.Model") -> None:
+        self._model = model
+        self._app = model.app
+
+    def __getitem__(self, key: str) -> dict[str, Any]:
+        """Get a dictionary value from the peer relation data."""
+        if not (peers := self._model.get_relation(PEER_RELATION)):
+            return {}
+
+        value = peers.data[self._app].get(key)
+        if not value:
+            return {}
+        try:
+            return json.loads(value)
+        except Exception as e:
+            logger.warning("Failed to parse peer relation key %s: %s", key, e)
+            return {}
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Set a value in the peer relation data."""
+        if not (peers := self._model.get_relation(PEER_RELATION)):
+            return
+
+        peers.data[self._app][key] = json.dumps(value)
+
+    def pop(self, key: str) -> dict[str, Any]:
+        """Remove and return a value from the peer relation data."""
+        if not (peers := self._model.get_relation(PEER_RELATION)):
+            return {}
+
+        data = peers.data[self._app].pop(key, None)
+        if not data:
+            return {}
+        try:
+            return json.loads(data)
+        except Exception as e:
+            logger.warning("Failed to parse popped key %s: %s", key, e)
+            return {}
+
+    def get_string(self, key: str) -> str | None:
+        """Get a string value from the peer relation data."""
+        if not (peers := self._model.get_relation(PEER_RELATION)):
+            return None
+        return peers.data[self._app].get(key)
+
+    def set_string(self, key: str, value: str) -> None:
+        """Set a string value in the peer relation data."""
+        if not (peers := self._model.get_relation(PEER_RELATION)):
+            return
+        peers.data[self._app][key] = value
