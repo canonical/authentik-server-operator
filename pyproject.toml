@@ -15,7 +15,7 @@ dependencies = [
     "cosl~=1.9.2",
     "jinja2",
     "pydantic~=2.13.4",
-    "lightkube~=0.21.0",
+    "lightkube~=0.22.0",
     "lightkube-models~=1.35.0.8",
     "requests~=2.32.0",
     "email-validator>=2.0",
