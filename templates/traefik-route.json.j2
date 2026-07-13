@@ -15,7 +15,7 @@
     "services": {
       "juju-{{ identifier }}-service": {
         "loadBalancer": {
-          "servers": [{ "url": "http://{{ app }}.{{ model }}.svc.cluster.local:9000" }]
+          "servers": [{ "url": "http://{{ app }}.{{ model }}.svc.cluster.local:{{ port }}" }]
         }
       }
     }

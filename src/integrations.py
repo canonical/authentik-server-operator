@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from constants import (
     CERTIFICATE_TRANSFER_INTEGRATION_NAME,
+    HTTP_PORT,
     PEER_RELATION,
 )
 from env_vars import EnvVars
@@ -291,6 +292,7 @@ class TraefikRouteIntegration(BaseModel):
             external_host=self.external_host,
             app=app_name,
             model=model_name,
+            port=HTTP_PORT,
         )
 
         return json.loads(rendered)
