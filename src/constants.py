@@ -14,7 +14,7 @@ HEALTH_CHECK_URL = f"http://localhost:{HTTP_PORT}/-/health/live/"
 HEALTH_READY_URL = f"http://localhost:{HTTP_PORT}/-/health/ready/"
 
 DATABASE_RELATION = "pg-database"
-INGRESS_RELATION = "ingress"
+TRAEFIK_ROUTE_RELATION = "traefik-route"
 SMTP_RELATION = "smtp"
 CLUSTER_RELATION = "authentik-cluster"
 SERVER_INFO_RELATION = "authentik-server-info"

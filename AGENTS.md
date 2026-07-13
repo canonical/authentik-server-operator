@@ -48,11 +48,11 @@ All data sources implement `EnvVarConvertible` (`to_env_vars() -> EnvVars`).
 
 ### Required
 - `pg-database` (`postgresql_client`) — PostgreSQL database
+- `traefik-route` (`traefik_route`) — Secure public ingress route
 
 ### Optional
 - `logging` (`loki_push_api`) — Forward logs to Loki
 - `tracing` (`tracing`) — Send traces to Tempo
-- `ingress` (`ingress`) — Traefik ingress
 
 ### Provided
 - `authentik-cluster` (`authentik_cluster`) — Share `AUTHENTIK_SECRET_KEY` with worker charm

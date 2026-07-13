@@ -3,7 +3,6 @@
 
 """Shared fixtures and state factory for Authentik Server unit tests."""
 
-import json
 from typing import Any
 from unittest.mock import MagicMock, PropertyMock
 
@@ -141,18 +140,6 @@ def peer_relation(authentik_secrets: testing.Secret) -> testing.PeerRelation:
         endpoint="authentik-peers",
         interface="authentik_peers",
         local_app_data={"secrets_id": authentik_secrets.id},
-    )
-
-
-@pytest.fixture
-def ingress_relation() -> testing.Relation:
-    return testing.Relation(
-        endpoint="ingress",
-        interface="ingress",
-        remote_app_name="traefik",
-        remote_app_data={
-            "ingress": json.dumps({"url": "http://authentik.example.com"}),
-        },
     )
 
 
@@ -319,11 +306,29 @@ def mocked_workload_check_health(mocker: MockerFixture) -> MagicMock:
 
 
 @pytest.fixture
+def mocked_traefik_route_integration_exists(mocker: MockerFixture) -> MagicMock:
+    return mocker.patch("charm.traefik_route_integration_exists", return_value=True)
+
+
+@pytest.fixture
+def mocked_traefik_route_is_ready(mocker: MockerFixture) -> MagicMock:
+    return mocker.patch("charm.traefik_route_is_ready", return_value=True)
+
+
+@pytest.fixture
+def mocked_traefik_route_is_secure(mocker: MockerFixture) -> MagicMock:
+    return mocker.patch("charm.traefik_route_is_secure", return_value=True)
+
+
+@pytest.fixture
 def all_satisfied_conditions(
     mocked_container_connectivity: MagicMock,
     mocked_get_missing_config_keys: MagicMock,
     mocked_database_integration_exists: MagicMock,
     mocked_database_resource_is_created: MagicMock,
+    mocked_traefik_route_integration_exists: MagicMock,
+    mocked_traefik_route_is_ready: MagicMock,
+    mocked_traefik_route_is_secure: MagicMock,
     mocked_secrets_is_ready: MagicMock,
     mocked_workload_is_running: MagicMock,
     mocked_workload_is_failing: MagicMock,
@@ -353,3 +358,17 @@ def certificate_transfer_relation() -> testing.Relation:
 def mocked_subprocess_run(mocker: MockerFixture) -> MagicMock:
     """Fixture for mocking subprocess.run."""
     return mocker.patch("charm.subprocess.run")
+
+
+@pytest.fixture
+def traefik_route_relation() -> testing.Relation:
+    """Fixture for traefik-route relation."""
+    return testing.Relation(
+        endpoint="traefik-route",
+        interface="traefik_route",
+        remote_app_name="traefik",
+        remote_app_data={
+            "external_host": "authentik.example.com",
+            "scheme": "https",
+        },
+    )

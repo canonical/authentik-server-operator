@@ -56,12 +56,12 @@ An integration with [postgresql-k8s-operator](https://github.com/canonical/postg
 
 An integration with [authentik-worker-operator](https://github.com/canonical/authentik-worker-operator) is **required**. The Authentik Worker handles background processes, outposts, and other asynchronous tasks for the cluster.
 
-### Ingress (`ingress`)
+### Ingress (`traefik-route`)
 
-An optional integration with [traefik-k8s-operator](https://github.com/canonical/traefik-k8s-operator) allows you to expose the Authentik web interface externally:
+An integration with [traefik-k8s-operator](https://github.com/canonical/traefik-k8s-operator) is **required**. The Authentik Server utilizes the `traefik_route` interface to define precise ingress routing and SSL termination:
 
 ```shell
-juju integrate traefik-k8s authentik-server:ingress
+juju integrate traefik-k8s authentik-server:traefik-route
 ```
 
 ### Observability

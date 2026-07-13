@@ -47,6 +47,8 @@ DEFAULT_SERVER_ENV: dict[str, str | bool] = {
     "AUTHENTIK_WEB__WORKERS": "2",
     # Web path — populated at runtime from ingress URL
     "AUTHENTIK_WEB__PATH": "/",
+    # Base URL — populated at runtime from traefik-route URL
+    "AUTHENTIK_OPTS__BASE_URL": "",
 }
 
 

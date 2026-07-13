@@ -1,0 +1,23 @@
+{
+  "http": {
+    "routers": {
+      "juju-{{ identifier }}-router-root": {
+        "entryPoints": ["web", "websecure"],
+        "rule": "PathPrefix(`/`, `/oauth2`, `/api`, `/.well-known`, `/flows`, `/static`, `/media`)",
+        "service": "juju-{{ identifier }}-service"
+        {%- if external_host %},
+        "tls": {
+          "domains": [{ "main": "{{ external_host }}" }]
+        }
+        {%- endif %}
+      }
+    },
+    "services": {
+      "juju-{{ identifier }}-service": {
+        "loadBalancer": {
+          "servers": [{ "url": "http://{{ app }}.{{ model }}.svc.cluster.local:9000" }]
+        }
+      }
+    }
+  }
+}
