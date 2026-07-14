@@ -43,6 +43,7 @@ def test_oauth_client_created_leader(
     peer_relation: testing.PeerRelation,
     cluster_relation: testing.Relation,
     authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
     all_satisfied_conditions: None,
 ) -> None:
     """Test that a leader generates credentials on client_created."""
@@ -53,7 +54,13 @@ def test_oauth_client_created_leader(
     )
     state = create_state(
         leader=True,
-        relations=[db_relation, peer_relation, cluster_relation, oauth_relation],
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 
@@ -80,7 +87,13 @@ def test_oauth_client_created_leader(
     )
     next_state = create_state(
         leader=True,
-        relations=[db_relation, peer_relation, cluster_relation, oauth_relation_with_config],
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation_with_config,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
     state_out = context.run(context.on.relation_changed(oauth_relation_with_config), next_state)
@@ -90,15 +103,14 @@ def test_oauth_client_created_leader(
     assert "client_id" in rel_out.local_app_data
     assert "client_secret_id" in rel_out.local_app_data
 
-    # Check standard OIDC endpoints are updated correctly
-    # By default, since no ingress is ready, it should fall back to local cluster address
+    # Check standard OIDC endpoints are updated correctly using the external host from traefik-route
     assert "issuer_url" in rel_out.local_app_data
     assert "authorization_endpoint" in rel_out.local_app_data
     assert "token_endpoint" in rel_out.local_app_data
     assert "jwks_endpoint" in rel_out.local_app_data
     assert (
         rel_out.local_app_data["issuer_url"]
-        == f"http://authentik-server.test-model.svc.cluster.local:9000/application/o/client-app-{oauth_relation.id}/"
+        == f"https://authentik.example.com/application/o/client-app-{oauth_relation.id}/"
     )
 
 
@@ -108,6 +120,7 @@ def test_oauth_client_created_non_leader(
     peer_relation: testing.PeerRelation,
     cluster_relation: testing.Relation,
     authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
     all_satisfied_conditions: None,
 ) -> None:
     """Test that a non-leader does not generate credentials."""
@@ -135,7 +148,13 @@ def test_oauth_client_created_non_leader(
     )
     state = create_state(
         leader=False,
-        relations=[db_relation, peer_relation, cluster_relation, oauth_relation],
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 
@@ -165,18 +184,25 @@ def test_oauth_endpoints_update_on_ingress_change(
             "client_secret_id": "secret:123",
         },
     )
-    # Define Traefik ingress relation with a specific URL
-    ingress_relation = testing.Relation(
-        endpoint="ingress",
-        interface="ingress",
+    # Define Traefik route relation with a specific URL
+    traefik_route_relation = testing.Relation(
+        endpoint="traefik-route",
+        interface="traefik_route",
         remote_app_name="traefik",
         remote_app_data={
-            "ingress": json.dumps({"url": "https://authentik.mycompany.org"}),
+            "external_host": "authentik.mycompany.org",
+            "scheme": "https",
         },
     )
     state = create_state(
         leader=True,
-        relations=[db_relation, peer_relation, cluster_relation, oauth_relation, ingress_relation],
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 
@@ -208,6 +234,7 @@ def test_oauth_relation_broken(
     peer_relation: testing.PeerRelation,
     cluster_relation: testing.Relation,
     authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
     all_satisfied_conditions: None,
     mock_authentik_api: MagicMock,
 ) -> None:
@@ -223,7 +250,13 @@ def test_oauth_relation_broken(
     )
     state = create_state(
         leader=True,
-        relations=[db_relation, peer_relation, cluster_relation, oauth_relation],
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 
@@ -252,6 +285,7 @@ def test_oauth_leader_election_heals_unprovisioned_relation(
     peer_relation: testing.PeerRelation,
     cluster_relation: testing.Relation,
     authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
     all_satisfied_conditions: None,
     mock_authentik_api: MagicMock,
 ) -> None:
@@ -273,7 +307,13 @@ def test_oauth_leader_election_heals_unprovisioned_relation(
     )
     state = create_state(
         leader=False,
-        relations=[db_relation, peer_relation, cluster_relation, oauth_relation],
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 
@@ -285,7 +325,13 @@ def test_oauth_leader_election_heals_unprovisioned_relation(
     # 3. Simulate leader election (leader=True) and run the leader_elected event
     promoted_state = create_state(
         leader=True,
-        relations=[db_relation, peer_relation, cluster_relation, rel_out],
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            rel_out,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 
@@ -310,6 +356,7 @@ def test_oauth_dynamic_scopes(
     peer_relation: testing.PeerRelation,
     cluster_relation: testing.Relation,
     authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
     all_satisfied_conditions: None,
     mock_authentik_api: MagicMock,
 ) -> None:
@@ -328,7 +375,13 @@ def test_oauth_dynamic_scopes(
     )
     state = create_state(
         leader=True,
-        relations=[db_relation, peer_relation, cluster_relation, oauth_relation],
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 
@@ -353,6 +406,7 @@ def test_oauth_relation_reconcile_uses_cache(
     db_relation: testing.Relation,
     authentik_secrets: testing.Secret,
     cluster_relation: testing.Relation,
+    traefik_route_relation: testing.Relation,
     all_satisfied_conditions: None,
     mock_authentik_api: MagicMock,
     mocker: MockerFixture,
@@ -404,7 +458,13 @@ def test_oauth_relation_reconcile_uses_cache(
 
     state = create_state(
         leader=True,
-        relations=[db_relation, peer_relation_with_cache, cluster_relation, oauth_relation],
+        relations=[
+            db_relation,
+            peer_relation_with_cache,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 
@@ -430,6 +490,7 @@ def test_oauth_relation_broken_uses_cache(
     db_relation: testing.Relation,
     authentik_secrets: testing.Secret,
     cluster_relation: testing.Relation,
+    traefik_route_relation: testing.Relation,
     all_satisfied_conditions: None,
     mock_authentik_api: MagicMock,
 ) -> None:
@@ -460,7 +521,13 @@ def test_oauth_relation_broken_uses_cache(
 
     state = create_state(
         leader=True,
-        relations=[db_relation, peer_relation_with_cache, cluster_relation, oauth_relation],
+        relations=[
+            db_relation,
+            peer_relation_with_cache,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
         secrets=[authentik_secrets],
     )
 

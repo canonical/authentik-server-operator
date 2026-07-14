@@ -290,32 +290,6 @@ class TestDatabaseEvents:
         context.run(context.on.relation_broken(db_relation), state)
 
 
-class TestIngressEvents:
-    def test_on_ingress_ready(
-        self,
-        context: testing.Context,
-        mocked_holistic_handler: MagicMock,
-        ingress_relation: testing.Relation,
-    ) -> None:
-        state = create_state(relations=[ingress_relation])
-
-        context.run(context.on.relation_changed(ingress_relation), state)
-
-        mocked_holistic_handler.assert_called_once()
-
-    def test_on_ingress_revoked(
-        self,
-        context: testing.Context,
-        mocked_holistic_handler: MagicMock,
-        ingress_relation: testing.Relation,
-    ) -> None:
-        state = create_state(relations=[ingress_relation])
-
-        context.run(context.on.relation_broken(ingress_relation), state)
-
-        mocked_holistic_handler.assert_called_once()
-
-
 class TestSmtpEvents:
     def test_on_smtp_relation_changed(
         self,
@@ -337,10 +311,17 @@ class TestSmtpEvents:
         cluster_relation: testing.Relation,
         authentik_secrets: testing.Secret,
         smtp_relation: testing.Relation,
+        traefik_route_relation: testing.Relation,
         all_satisfied_conditions: None,
     ) -> None:
         state = create_state(
-            relations=[db_relation, peer_relation, cluster_relation, smtp_relation],
+            relations=[
+                db_relation,
+                peer_relation,
+                cluster_relation,
+                smtp_relation,
+                traefik_route_relation,
+            ],
             secrets=[authentik_secrets],
         )
 
@@ -360,6 +341,123 @@ class TestSmtpEvents:
         assert env.get("AUTHENTIK_EMAIL__USE_TLS") == "true"
         assert env.get("AUTHENTIK_EMAIL__USE_SSL") == "false"
         assert env.get("AUTHENTIK_EMAIL__FROM") == "sender@example.com"
+
+
+class TestTraefikRouteEvents:
+    def test_on_traefik_route_ready(
+        self,
+        context: testing.Context,
+        mocked_holistic_handler: MagicMock,
+        traefik_route_relation: testing.Relation,
+    ) -> None:
+        state = create_state(relations=[traefik_route_relation])
+
+        context.run(context.on.relation_changed(traefik_route_relation), state)
+
+        mocked_holistic_handler.assert_called_once()
+
+    def test_traefik_route_variables_applied_to_pebble_layer(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+    ) -> None:
+        state = create_state(
+            relations=[db_relation, peer_relation, cluster_relation, traefik_route_relation],
+            secrets=[authentik_secrets],
+        )
+
+        state_out = context.run(context.on.config_changed(), state)
+
+        container = state_out.get_container(WORKLOAD_CONTAINER)
+        plan = container.plan.to_dict()
+        services = plan.get("services", {})
+        assert WORKLOAD_SERVICE in services
+        service = services[WORKLOAD_SERVICE]
+
+        env = service.get("environment", {})
+        assert env.get("AUTHENTIK_OPTS__BASE_URL") == "https://authentik.example.com"
+
+    def test_traefik_route_propagated_to_server_info(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        server_info_relation: testing.Relation,
+        all_satisfied_conditions: None,
+    ) -> None:
+        state = create_state(
+            relations=[
+                db_relation,
+                peer_relation,
+                cluster_relation,
+                traefik_route_relation,
+                server_info_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        state_out = context.run(context.on.config_changed(), state)
+
+        # Retrieve output databag for server-info relation
+        server_info_out = state_out.get_relation(server_info_relation.id)
+        # Check app databag of this unit's app
+        assert (
+            server_info_out.local_app_data.get("authentik_host") == "https://authentik.example.com"
+        )
+
+    def test_traefik_route_submits_to_traefik(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+    ) -> None:
+        state = create_state(
+            relations=[db_relation, peer_relation, cluster_relation, traefik_route_relation],
+            secrets=[authentik_secrets],
+        )
+
+        state_out = context.run(context.on.config_changed(), state)
+
+        traefik_route_out = state_out.get_relation(traefik_route_relation.id)
+        # Verify the submitted YAML config exists in local app data
+        config_yaml = traefik_route_out.local_app_data.get("config")
+        assert config_yaml is not None
+
+        import yaml
+
+        config_dict = yaml.safe_load(config_yaml)
+        # Check router and service mappings
+        assert "http" in config_dict
+        assert "routers" in config_dict["http"]
+        assert "services" in config_dict["http"]
+
+        routers = config_dict["http"]["routers"]
+        services = config_dict["http"]["services"]
+
+        # Verify that isolation-guaranteed names exist
+        router_key = "juju-test-model-authentik-server-router-root"
+        service_key = "juju-test-model-authentik-server-service"
+        assert router_key in routers
+        assert service_key in services
+
+        assert (
+            routers[router_key]["rule"]
+            == "PathPrefix(`/`, `/oauth2`, `/api`, `/.well-known`, `/flows`, `/static`, `/media`)"
+        )
+        assert routers[router_key]["service"] == service_key
+        assert routers[router_key]["tls"]["domains"][0]["main"] == "authentik.example.com"
 
 
 class TestPebbleCheckEvents:
@@ -488,6 +586,7 @@ class TestCertificateEvents:
         db_relation: testing.Relation,
         cluster_relation: testing.Relation,
         peer_relation: testing.PeerRelation,
+        traefik_route_relation: testing.Relation,
         authentik_secrets: testing.Secret,
         mocked_subprocess_run: MagicMock,
         all_satisfied_conditions: None,
@@ -507,6 +606,7 @@ class TestCertificateEvents:
                 db_relation,
                 cluster_relation,
                 peer_relation,
+                traefik_route_relation,
             ],
             secrets=[authentik_secrets],
         )
@@ -525,6 +625,7 @@ class TestTLSFailure:
         db_relation: testing.Relation,
         cluster_relation: testing.Relation,
         peer_relation: testing.PeerRelation,
+        traefik_route_relation: testing.Relation,
         authentik_secrets: testing.Secret,
         mocked_subprocess_run: MagicMock,
         all_satisfied_conditions: None,
@@ -550,6 +651,7 @@ class TestTLSFailure:
                 db_relation,
                 cluster_relation,
                 peer_relation,
+                traefik_route_relation,
             ],
             secrets=[authentik_secrets],
         )

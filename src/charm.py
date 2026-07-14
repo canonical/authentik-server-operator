@@ -28,7 +28,7 @@ from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
 from charms.prometheus_k8s.v0.prometheus_scrape import MetricsEndpointProvider
 from charms.smtp_integrator.v0.smtp import SmtpRequires
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
-from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
+from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 
 from authentik_api import AuthentikAPI
 from configs import CharmConfig
@@ -38,7 +38,6 @@ from constants import (
     DATABASE_RELATION,
     GRAFANA_RELATION_NAME,
     HTTP_PORT,
-    INGRESS_RELATION,
     LOCAL_CERTIFICATES_PATH,
     LOCAL_CHARM_CERTIFICATES_FILE,
     LOCAL_CHARM_CERTIFICATES_PATH,
@@ -50,6 +49,7 @@ from constants import (
     SERVER_INFO_RELATION,
     SMTP_RELATION,
     TRACING_RELATION_NAME,
+    TRAEFIK_ROUTE_RELATION,
     WORKLOAD_CONTAINER,
     WORKLOAD_SERVICE,
 )
@@ -64,10 +64,10 @@ from exceptions import (
 )
 from integrations import (
     DatabaseConfig,
-    IngressData,
     SmtpData,
     TLSCertificates,
     TracingData,
+    TraefikRouteIntegration,
 )
 from oauth import OauthReconciler
 from secret import Secrets
@@ -77,6 +77,9 @@ from utils import (
     container_connectivity,
     database_integration_exists,
     database_resource_is_created,
+    traefik_route_integration_exists,
+    traefik_route_is_ready,
+    traefik_route_is_secure,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,7 +103,11 @@ class AuthentikServerCharm(ops.CharmBase):
         self.server_info_provider = AuthentikServerInfoProvider(
             self, relation_name=SERVER_INFO_RELATION
         )
-        self.ingress = IngressPerAppRequirer(self, relation_name=INGRESS_RELATION, port=HTTP_PORT)
+        self.traefik_route = TraefikRouteRequirer(
+            self,
+            self.model.get_relation(TRAEFIK_ROUTE_RELATION),
+            relation_name=TRAEFIK_ROUTE_RELATION,
+        )
         self.smtp = SmtpRequires(self, relation_name=SMTP_RELATION)
         self.oauth_provider = OAuthProvider(self, relation_name=OAUTH_RELATION_NAME)
 
@@ -144,8 +151,7 @@ class AuthentikServerCharm(ops.CharmBase):
         self.framework.observe(self.database.on.endpoints_changed, self._on_holistic_handler)
         self.framework.observe(self.cluster_provider.on.ready, self._on_holistic_handler)
         self.framework.observe(self.server_info_provider.on.ready, self._on_holistic_handler)
-        self.framework.observe(self.ingress.on.ready, self._on_holistic_handler)
-        self.framework.observe(self.ingress.on.revoked, self._on_holistic_handler)
+        self.framework.observe(self.traefik_route.on.ready, self._on_holistic_handler)
         self.framework.observe(self.smtp.on.smtp_data_available, self._on_holistic_handler)
         self.framework.observe(self.tracing.on.endpoint_changed, self._on_holistic_handler)
         self.framework.observe(self.tracing.on.endpoint_removed, self._on_holistic_handler)
@@ -209,8 +215,8 @@ class AuthentikServerCharm(ops.CharmBase):
             self._secrets,
             self._config,
             TracingData.load(self.tracing),
-            IngressData.load(self.ingress),
             SmtpData.load(self.smtp),
+            TraefikRouteIntegration.load(self.traefik_route),
         )
 
     def _on_holistic_handler(self, event: ops.EventBase) -> None:
@@ -228,6 +234,7 @@ class AuthentikServerCharm(ops.CharmBase):
         for f in [
             self._ensure_secrets,
             self._ensure_cluster_relation,
+            self._ensure_traefik_route,
             self._ensure_server_info_relation,
             self._ensure_tls,
             self._ensure_oauth_relation,
@@ -280,6 +287,34 @@ class AuthentikServerCharm(ops.CharmBase):
                 db_password=db_info.password,
                 db_name=db_info.name,
             )
+        return True
+
+    def _ensure_traefik_route(self, event: ops.EventBase | None = None) -> bool:
+        """Ensure Traefik route configuration is submitted to Traefik."""
+        if not self.model.relations[TRAEFIK_ROUTE_RELATION]:
+            return False
+
+        if not self.unit.is_leader():
+            return True
+
+        if not self.traefik_route.is_ready():
+            return False
+
+        integration = TraefikRouteIntegration.load(self.traefik_route)
+        config = integration.render_config(self.app.name, self.model.name)
+        if not config:
+            logger.error("Failed to render Traefik route configuration")
+            return False
+
+        try:
+            self.traefik_route.submit_to_traefik(config=config)
+        except Exception as e:
+            logger.error("Failed to submit config to Traefik: %s", e)
+            return False
+
+        if not integration.external_host or not integration.secure:
+            return False
+
         return True
 
     def _ensure_server_info_relation(self, event: ops.EventBase | None = None) -> bool:
@@ -411,10 +446,10 @@ class AuthentikServerCharm(ops.CharmBase):
     def _authentik_host(self) -> str:
         """Externally reachable Authentik host URL.
 
-        Uses the ingress URL when ingress is configured, otherwise falls back
-        to the cluster-local service address.
+        Prioritizes the Traefik route URL when configured, falling back to the
+        cluster-local service address.
         """
-        if url := IngressData.load(self.ingress).url:
+        if url := TraefikRouteIntegration.load(self.traefik_route).base_url:
             return url
         return f"http://{self.app.name}.{self.model.name}.svc.cluster.local:{HTTP_PORT}"
 
@@ -457,11 +492,7 @@ class AuthentikServerCharm(ops.CharmBase):
         if configs := self._config.get_missing_config_keys():
             event.add_status(ops.BlockedStatus(f"missing required configuration: {configs}"))
 
-        if not database_integration_exists(self):
-            event.add_status(ops.BlockedStatus("missing pg-database relation"))
-
-        if database_integration_exists(self) and not database_resource_is_created(self):
-            event.add_status(ops.WaitingStatus("waiting for database creation"))
+        self._collect_integrations_status(event)
 
         if not self._secrets.is_ready():
             event.add_status(ops.WaitingStatus("waiting for secrets"))
@@ -474,6 +505,23 @@ class AuthentikServerCharm(ops.CharmBase):
 
         event.add_status(self.resources_patch.get_status())
         event.add_status(ops.ActiveStatus())
+
+    def _collect_integrations_status(self, event: ops.CollectStatusEvent) -> None:
+        """Collect status for integrations (database and traefik-route)."""
+        if not database_integration_exists(self):
+            event.add_status(ops.BlockedStatus("missing pg-database relation"))
+
+        if database_integration_exists(self) and not database_resource_is_created(self):
+            event.add_status(ops.WaitingStatus("waiting for database creation"))
+
+        if not traefik_route_integration_exists(self):
+            event.add_status(ops.BlockedStatus("missing traefik-route relation"))
+
+        if traefik_route_integration_exists(self) and not traefik_route_is_ready(self):
+            event.add_status(ops.WaitingStatus("waiting for ingress to be ready"))
+
+        if traefik_route_is_ready(self) and not traefik_route_is_secure(self):
+            event.add_status(ops.BlockedStatus("Requires a secure (HTTPS) public ingress."))
 
     def _collect_health_status(self, event: ops.CollectStatusEvent) -> None:
         """Collect status from workload health check."""

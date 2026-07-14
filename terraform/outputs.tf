@@ -23,7 +23,7 @@ output "requires" {
     logging         = "logging"
     tracing         = "tracing"
     pg-database     = "pg-database"
-    ingress         = "ingress"
+    traefik-route   = "traefik-route"
     receive-ca-cert = "receive-ca-cert"
     smtp            = "smtp"
   }

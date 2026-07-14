@@ -15,8 +15,12 @@ from integration.conftest import integrate_dependencies
 from integration.constants import (
     APP_IMAGE,
     APP_NAME,
+    CERTIFICATES_APP,
+    CERTIFICATES_CHANNEL,
     DB_APP,
     DB_CHANNEL,
+    TRAEFIK_APP,
+    TRAEFIK_CHANNEL,
     WORKER_APP,
     WORKER_CHANNEL,
 )
@@ -25,12 +29,13 @@ from integration.utils import (
     all_active,
     and_,
     any_error,
+    get_app_integration_data,
     is_blocked,
     remove_integration,
     unit_number,
 )
 
-from src.constants import CLUSTER_RELATION, DATABASE_RELATION
+from src.constants import CLUSTER_RELATION, DATABASE_RELATION, TRAEFIK_ROUTE_RELATION
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,19 @@ def test_build_and_deploy(juju: jubilant.Juju, charm: Path) -> None:
     )
 
     juju.deploy(
+        TRAEFIK_APP,
+        channel=TRAEFIK_CHANNEL,
+        config={"external_hostname": "authentik.example.com"},
+        trust=True,
+    )
+
+    juju.deploy(
+        CERTIFICATES_APP,
+        channel=CERTIFICATES_CHANNEL,
+        trust=True,
+    )
+
+    juju.deploy(
         str(charm),
         app=APP_NAME,
         resources={"oci-image": APP_IMAGE},
@@ -70,8 +88,8 @@ def test_build_and_deploy(juju: jubilant.Juju, charm: Path) -> None:
     integrate_dependencies(juju)
 
     juju.wait(
-        ready=all_active(APP_NAME, DB_APP, WORKER_APP),
-        error=any_error(APP_NAME, DB_APP, WORKER_APP),
+        ready=all_active(APP_NAME, DB_APP, WORKER_APP, TRAEFIK_APP, CERTIFICATES_APP),
+        error=any_error(APP_NAME, DB_APP, WORKER_APP, TRAEFIK_APP, CERTIFICATES_APP),
         timeout=20 * 60,
     )
 
@@ -84,6 +102,16 @@ def test_app_health(
     """Test workload health endpoint is accessible."""
     resp = http_client.get(f"http://{public_address}:9000/-/health/live/")
     resp.raise_for_status()
+
+
+def test_traefik_route_integration(juju: jubilant.Juju) -> None:
+    """Test that the Traefik Route integration configures routing rules correctly."""
+    relation_data = get_app_integration_data(juju, TRAEFIK_APP, "traefik-route")
+    assert relation_data
+    assert "config" in relation_data
+    config_yaml = relation_data["config"]
+    assert "PathPrefix" in config_yaml
+    assert "authentik.example.com" in config_yaml
 
 
 def test_scale_up(juju: jubilant.Juju) -> None:
@@ -106,6 +134,7 @@ def test_scale_up(juju: jubilant.Juju) -> None:
     [
         (DB_APP, DATABASE_RELATION, is_blocked),
         (WORKER_APP, CLUSTER_RELATION, is_blocked),
+        ("traefik-k8s", TRAEFIK_ROUTE_RELATION, is_blocked),
     ],
 )
 def test_remove_integration(

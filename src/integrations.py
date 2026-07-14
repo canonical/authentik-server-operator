@@ -6,8 +6,8 @@
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
-from urllib.parse import urlparse
+from pathlib import Path
+from typing import Any, Optional
 
 import ops
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
@@ -16,10 +16,13 @@ from charms.certificate_transfer_interface.v1.certificate_transfer import (
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.smtp_integrator.v0.smtp import SmtpRequires, TransportSecurity
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
-from charms.traefik_k8s.v2.ingress import IngressPerAppRequirer
+from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
+from jinja2 import Environment, FileSystemLoader
+from pydantic import BaseModel
 
 from constants import (
     CERTIFICATE_TRANSFER_INTEGRATION_NAME,
+    HTTP_PORT,
     PEER_RELATION,
 )
 from env_vars import EnvVars
@@ -63,28 +66,6 @@ class DatabaseConfig:
             password=integration_data.get("password", ""),
             name=integration_data.get("database", ""),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class IngressData:
-    """The data source from the ingress integration."""
-
-    url: str = ""
-    web_path: str = "/"
-
-    def to_env_vars(self) -> EnvVars:
-        """Return ingress-derived environment variables."""
-        return {"AUTHENTIK_WEB__PATH": self.web_path}
-
-    @classmethod
-    def load(cls, requirer: IngressPerAppRequirer) -> "IngressData":
-        """Load ingress data from the relation."""
-        if not (url := requirer.url):
-            return cls()
-        path = urlparse(url).path or "/"
-        if not path.endswith("/"):
-            path += "/"
-        return cls(url=url, web_path=path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,3 +242,57 @@ class PeerData:
         if not (peers := self._model.get_relation(PEER_RELATION)):
             return
         peers.data[self._app][key] = value
+
+
+class TraefikRouteIntegration(BaseModel):
+    """The data source from the Traefik route integration."""
+
+    external_host: str = ""
+    scheme: str = ""
+
+    @property
+    def secure(self) -> bool:
+        """Whether the scheme is HTTPS."""
+        return self.scheme == "https"
+
+    def to_env_vars(self) -> EnvVars:
+        """Return Traefik Route environment variables."""
+        if not self.external_host:
+            return {}
+        return {"AUTHENTIK_OPTS__BASE_URL": self.base_url}
+
+    @property
+    def base_url(self) -> str:
+        """The base URL for this route."""
+        if not self.external_host:
+            return ""
+        scheme = self.scheme or "http"
+        return f"{scheme}://{self.external_host}"
+
+    @classmethod
+    def load(cls, requirer: Optional[TraefikRouteRequirer]) -> "TraefikRouteIntegration":
+        """Load Traefik Route data from the relation."""
+        if not requirer or not requirer.is_ready():
+            return cls()
+        return cls(
+            external_host=requirer.external_host,
+            scheme=requirer.scheme,
+        )
+
+    def render_config(self, app_name: str, model_name: str) -> dict:
+        """Render Traefik route configuration dictionary from jinja template."""
+        template_dir = Path(__file__).parent.parent / "templates"
+        env = Environment(loader=FileSystemLoader(template_dir))
+        template = env.get_template("traefik-route.json.j2")
+
+        identifier = f"{model_name}-{app_name}"
+
+        rendered = template.render(
+            identifier=identifier,
+            external_host=self.external_host,
+            app=app_name,
+            model=model_name,
+            port=HTTP_PORT,
+        )
+
+        return json.loads(rendered)

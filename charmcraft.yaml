@@ -83,9 +83,9 @@ requires:
     interface: postgresql_client
     optional: false
     limit: 1
-  ingress:
-    interface: ingress
-    optional: true
+  traefik-route:
+    interface: traefik_route
+    optional: false
     limit: 1
   receive-ca-cert:
     interface: certificate_transfer

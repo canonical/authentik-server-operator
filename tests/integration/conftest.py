@@ -10,7 +10,7 @@ from typing import Generator
 import jubilant
 import pytest
 import requests
-from integration.constants import APP_NAME, DB_APP, WORKER_APP
+from integration.constants import APP_NAME, CERTIFICATES_APP, DB_APP, TRAEFIK_APP, WORKER_APP
 from integration.utils import get_unit_address
 
 from src.constants import CLUSTER_RELATION
@@ -42,6 +42,8 @@ def integrate_dependencies(juju: jubilant.Juju) -> None:
     """Integrate the charm with all required dependencies."""
     juju.integrate(DB_APP, APP_NAME)
     juju.integrate(f"{APP_NAME}:{CLUSTER_RELATION}", WORKER_APP)
+    juju.integrate(f"{APP_NAME}:traefik-route", TRAEFIK_APP)
+    juju.integrate(f"{TRAEFIK_APP}:certificates", f"{CERTIFICATES_APP}:certificates")
 
 
 @pytest.fixture
