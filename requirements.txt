@@ -1,5 +1,5 @@
 ops ~=3.0
-cosl~=1.9.2
+cosl~=1.10.1
 jinja2
 pydantic~=2.13.4
 lightkube~=0.22.0
