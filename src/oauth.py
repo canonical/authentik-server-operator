@@ -13,6 +13,7 @@ from charms.hydra.v0.oauth import OAUTH_PROVIDER_JSON_SCHEMA, _dump_data
 from authentik_api import AuthentikAPI
 from constants import (
     AUTHORIZATION_FLOW_CACHE_PEER_KEY,
+    INVALIDATION_FLOW_CACHE_PEER_KEY,
     OAUTH_RELATION_NAME,
     OAUTH_SYNC_CACHE_PEER_KEY,
 )
@@ -76,11 +77,20 @@ class OauthReconciler:
                 logger.error("Failed to retrieve explicit consent authorization flow UUID")
                 return
 
+        invalidation_flow = self._peer_data.get_string(INVALIDATION_FLOW_CACHE_PEER_KEY)
+        if not invalidation_flow:
+            invalidation_flow = self._api.get_invalidation_flow_uuid()
+            if invalidation_flow:
+                self._peer_data.set_string(INVALIDATION_FLOW_CACHE_PEER_KEY, invalidation_flow)
+            else:
+                logger.error("Failed to retrieve default invalidation flow UUID")
+                return
+
         # Sync active relations
         for relation_id in active_relation_ids:
             relation = self._charm.model.get_relation(OAUTH_RELATION_NAME, relation_id)
             if relation:
-                self._sync_relation(relation, authorization_flow)
+                self._sync_relation(relation, authorization_flow, invalidation_flow)
 
         # Garbage collect / delete orphans (Authentik providers/applications whose Juju relations are gone)
         self.garbage_collect(active_relation_ids)
@@ -89,12 +99,14 @@ class OauthReconciler:
         self,
         relation: "ops.Relation",
         authorization_flow: str,
+        invalidation_flow: str,
     ) -> None:
         """Sync a single Juju oauth relation with the Authentik REST API.
 
         Args:
             relation: The Juju relation object.
             authorization_flow: The consent flow UUID.
+            invalidation_flow: The invalidation flow UUID.
         """
         if not relation.app:
             logger.info("Remote application is not ready for relation %s", relation.id)
@@ -130,11 +142,10 @@ class OauthReconciler:
 
         scope_key = ",".join(scopes)
 
-        # Hash configurations to minimize cache bloat and avoid storing plaintext credentials in the peer databag.
-        # We only hash the primary dynamic inputs (redirect_uri, authorization_flow, scope_key).
+        # We only hash the primary dynamic inputs (redirect_uri, authorization_flow, invalidation_flow, scope_key).
         # Since client credentials are immutable once generated for a relation, they do not need to be hashed.
         # This allows us to bypass Juju secret lookups entirely on the happy path.
-        config_str = f"{redirect_uri}:{authorization_flow}:{scope_key}"
+        config_str = f"{redirect_uri}:{authorization_flow}:{invalidation_flow}:{scope_key}"
         config_hash = hashlib.sha256(config_str.encode("utf-8")).hexdigest()
 
         # Check if the cache already indicates this relation is synced
@@ -150,8 +161,8 @@ class OauthReconciler:
             logger.info("Relation %s is already in sync with Authentik (cached)", relation.id)
             return
 
-        # Cache mismatch or missing. Retrieve or generate credentials and fetch property mappings on-demand.
-        client_id, client_secret = self._charm._get_or_generate_credentials(relation)
+        # Cache mismatch or missing. Retrieve or generate credentials in memory.
+        client_id, client_secret, is_new = self._charm._get_or_generate_credentials(relation)
 
         property_mappings = self._property_mappings_cache.get(scope_key)
         if property_mappings is None:
@@ -165,10 +176,18 @@ class OauthReconciler:
             client_secret=client_secret,
             redirect_uri=redirect_uri,
             authorization_flow=authorization_flow,
+            invalidation_flow=invalidation_flow,
             property_mappings=property_mappings,
         )
         if not actual_slug or provider_pk is None:
-            return
+            raise RuntimeError(f"Failed to sync Authentik provider and application for relation {relation.id}")
+
+        # Sync succeeded! Save client credentials to relation data if newly generated
+        if is_new:
+            self._charm.oauth_provider.set_client_credentials_in_relation_data(
+                relation.id, client_id, client_secret
+            )
+            logger.info("Saved generated client credentials to relation data for relation %s", relation.id)
 
         # Update the sync cache
         oauth_sync_cache[str(relation.id)] = {
@@ -185,6 +204,7 @@ class OauthReconciler:
         client_secret: str,
         redirect_uri: str,
         authorization_flow: str,
+        invalidation_flow: str,
         property_mappings: list[str],
     ) -> tuple[str | None, int | None]:
         """Create or update provider and application in Authentik.
@@ -195,6 +215,7 @@ class OauthReconciler:
             client_secret: The OIDC client secret.
             redirect_uri: The redirect URI.
             authorization_flow: Flow UUID.
+            invalidation_flow: Invalidation flow UUID.
             property_mappings: Property mappings list.
 
         Returns:
@@ -212,6 +233,7 @@ class OauthReconciler:
                 client_secret=client_secret,
                 redirect_uris=redirect_uri,
                 authorization_flow=authorization_flow,
+                invalidation_flow=invalidation_flow,
                 property_mappings=property_mappings,
             )
             if provider_pk is None:
@@ -233,6 +255,7 @@ class OauthReconciler:
                     client_secret=client_secret,
                     redirect_uris=redirect_uri,
                     authorization_flow=authorization_flow,
+                    invalidation_flow=invalidation_flow,
                     property_mappings=property_mappings,
                 )
             self._api.update_application(slug=slug, name=name, provider_pk=provider_pk)

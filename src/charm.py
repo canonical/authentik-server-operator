@@ -208,6 +208,25 @@ class AuthentikServerCharm(ops.CharmBase):
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
 
     @property
+    def _authentik_host(self) -> str:
+        """Externally reachable Authentik host URL.
+
+        Prioritizes the Traefik route URL when configured, falling back to the
+        cluster-local service address.
+        """
+        if url := TraefikRouteIntegration.load(self.traefik_route).base_url:
+            return url
+        return self._internal_url
+
+    @property
+    def _internal_url(self) -> str:
+        """Internally reachable Authentik host URL.
+
+        Uses the cluster-local service address.
+        """
+        return f"http://{self.app.name}.{self.model.name}.svc.cluster.local:{HTTP_PORT}"
+
+    @property
     def _pebble_layer(self) -> ops.pebble.Layer:
         """Build the pebble layer from all env var sources."""
         return self._pebble.render_pebble_layer(
@@ -325,7 +344,7 @@ class AuthentikServerCharm(ops.CharmBase):
             and self.model.relations[SERVER_INFO_RELATION]
         ):
             self.server_info_provider.update_relations_app_data(
-                authentik_host=self._authentik_host,
+                authentik_host=self._internal_url,
                 bootstrap_token=self._secrets.bootstrap_token,
                 bootstrap_password=self._secrets.bootstrap_password,
             )
@@ -411,14 +430,14 @@ class AuthentikServerCharm(ops.CharmBase):
         reconciler.reconcile(active_relation_ids)
         return True
 
-    def _get_or_generate_credentials(self, relation: ops.Relation) -> tuple[str, str]:
-        """Load or generate OIDC client credentials for a relation.
+    def _get_or_generate_credentials(self, relation: ops.Relation) -> tuple[str, str, bool]:
+        """Get existing OIDC credentials or generate new ones in memory.
 
         Args:
             relation: The Juju relation object.
 
         Returns:
-            A tuple of (client_id, client_secret).
+            A tuple of (client_id, client_secret, is_new).
         """
         client_id = relation.data[self.app].get("client_id")
         client_secret = None
@@ -426,32 +445,19 @@ class AuthentikServerCharm(ops.CharmBase):
             client_secret_id = relation.data[self.app].get("client_secret_id")
             if client_secret_id:
                 try:
-                    secret_obj = self.oauth_provider.get_client_secret(client_secret_id)
+                    secret_obj = self.model.get_secret(id=client_secret_id)
                     client_secret = secret_obj.get_content()[CLIENT_SECRET_FIELD]
                 except Exception as e:
                     logger.warning("Failed to read existing secret %s: %s", client_secret_id, e)
 
+        is_new = False
         if not client_id or not client_secret:
-            # Generate new secure credentials
+            # Generate new secure credentials in memory (do not write to databag yet)
             client_id = token_urlsafe(16)
             client_secret = token_urlsafe(32)
-            self.oauth_provider.set_client_credentials_in_relation_data(
-                relation.id, client_id, client_secret
-            )
-            logger.info("Generated new client credentials for relation %s", relation.id)
+            is_new = True
 
-        return client_id, client_secret
-
-    @property
-    def _authentik_host(self) -> str:
-        """Externally reachable Authentik host URL.
-
-        Prioritizes the Traefik route URL when configured, falling back to the
-        cluster-local service address.
-        """
-        if url := TraefikRouteIntegration.load(self.traefik_route).base_url:
-            return url
-        return f"http://{self.app.name}.{self.model.name}.svc.cluster.local:{HTTP_PORT}"
+        return client_id, client_secret, is_new
 
     def _on_pebble_ready(self, event: ops.PebbleReadyEvent) -> None:
         """Handle the pebble-ready event."""

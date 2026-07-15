@@ -3,7 +3,7 @@
     "routers": {
       "juju-{{ identifier }}-router-root": {
         "entryPoints": ["web", "websecure"],
-        "rule": "PathPrefix(`/`, `/oauth2`, `/api`, `/.well-known`, `/flows`, `/static`, `/media`)",
+        "rule": "PathPrefix(`/if`, `/flows`, `/api`, `/.well-known`, `/static`, `/media`, `/application/o`, `/outpost.goauthentik.io`, `/brand`, `/oauth2`)",
         "service": "juju-{{ identifier }}-service"
         {%- if external_host %},
         "tls": {

@@ -410,7 +410,7 @@ class TestTraefikRouteEvents:
         server_info_out = state_out.get_relation(server_info_relation.id)
         # Check app databag of this unit's app
         assert (
-            server_info_out.local_app_data.get("authentik_host") == "https://authentik.example.com"
+            server_info_out.local_app_data.get("authentik_host") == "http://authentik-server.test-model.svc.cluster.local:9000"
         )
 
     def test_traefik_route_submits_to_traefik(
@@ -454,7 +454,7 @@ class TestTraefikRouteEvents:
 
         assert (
             routers[router_key]["rule"]
-            == "PathPrefix(`/`, `/oauth2`, `/api`, `/.well-known`, `/flows`, `/static`, `/media`)"
+            == "PathPrefix(`/if`, `/flows`, `/api`, `/.well-known`, `/static`, `/media`, `/application/o`, `/outpost.goauthentik.io`, `/brand`, `/oauth2`)"
         )
         assert routers[router_key]["service"] == service_key
         assert routers[router_key]["tls"]["domains"][0]["main"] == "authentik.example.com"

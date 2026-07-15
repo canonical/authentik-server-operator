@@ -57,7 +57,7 @@ class AuthentikAPI:
             pagination = data.get("pagination")
             if pagination:
                 next_page = pagination.get("next")
-                if next_page is not None:
+                if next_page is not None and next_page > 0:
                     current_params["page"] = next_page
                     continue
                 break
@@ -79,7 +79,7 @@ class AuthentikAPI:
             True if the service is available, False otherwise.
         """
         try:
-            url = f"{self.base_url}/api/v3/flows/flows/"
+            url = f"{self.base_url}/api/v3/flows/instances/"
             response = self.session.get(url, timeout=5)
             return response.status_code == 200
         except RequestException:
@@ -93,7 +93,7 @@ class AuthentikAPI:
         """
         try:
             url = (
-                f"{self.base_url}/api/v3/flows/flows/?"
+                f"{self.base_url}/api/v3/flows/instances/?"
                 "slug=default-provider-authorization-explicit-consent"
             )
             response = self.session.get(url, timeout=5)
@@ -103,7 +103,7 @@ class AuthentikAPI:
                 return results[0]["pk"]
 
             # Fallback to listing flows to find any authorization or consent flow
-            url = f"{self.base_url}/api/v3/flows/flows/"
+            url = f"{self.base_url}/api/v3/flows/instances/"
             first_flow = None
             for flow in self._get_paginated(url, params={"ordering": "slug"}):
                 if first_flow is None:
@@ -118,6 +118,32 @@ class AuthentikAPI:
             logger.error("Failed to retrieve authorization flow: %s", e)
         return None
 
+    def get_invalidation_flow_uuid(self) -> str | None:
+        """Retrieve the default provider invalidation flow UUID.
+
+        Returns:
+            The flow UUID string if found, otherwise None.
+        """
+        try:
+            url = (
+                f"{self.base_url}/api/v3/flows/instances/?"
+                "slug=default-provider-invalidation-flow"
+            )
+            response = self.session.get(url, timeout=5)
+            response.raise_for_status()
+            results = response.json().get("results", [])
+            if results:
+                return results[0]["pk"]
+
+            # Fallback to listing flows to find any invalidation flow
+            url = f"{self.base_url}/api/v3/flows/instances/"
+            for flow in self._get_paginated(url, params={"ordering": "slug"}):
+                if "invalidation" in flow.get("slug", ""):
+                    return flow["pk"]
+        except Exception as e:
+            logger.error("Failed to retrieve invalidation flow: %s", e)
+        return None
+
     def get_property_mappings(self, scopes: list[str]) -> list[str]:
         """Retrieve UUIDs of standard OIDC scope property mappings matching requested scopes.
 
@@ -130,7 +156,7 @@ class AuthentikAPI:
         mappings = []
         try:
             if self._scope_property_mappings is None:
-                url = f"{self.base_url}/api/v3/propertymappings/providers/scope/"
+                url = f"{self.base_url}/api/v3/propertymappings/provider/scope/"
                 self._scope_property_mappings = list(self._get_paginated(url))
 
             requested_scopes = [s.lower() for s in scopes]
@@ -192,6 +218,33 @@ class AuthentikAPI:
         url = f"{self.base_url}/api/v3/core/applications/"
         return self._get_paginated(url)
 
+    def _format_redirect_uris(self, redirect_uris: str | list[str] | list[dict]) -> list[dict]:
+        """Format redirect URIs as required by the Authentik REST API.
+
+        Args:
+            redirect_uris: Redirection URIs in string or list format.
+
+        Returns:
+            A list of RedirectURIRequest dicts.
+        """
+        if isinstance(redirect_uris, list) and all(isinstance(x, dict) for x in redirect_uris):
+            return redirect_uris
+
+        processed_redirect_uris = []
+        if isinstance(redirect_uris, str):
+            uris_list = [u.strip() for f in redirect_uris.splitlines() for u in f.split(",") if u.strip()]
+        elif isinstance(redirect_uris, list):
+            uris_list = [str(u).strip() for u in redirect_uris if str(u).strip()]
+        else:
+            uris_list = []
+
+        for uri in uris_list:
+            processed_redirect_uris.append({
+                "matching_mode": "strict",
+                "url": uri
+            })
+        return processed_redirect_uris
+
     def create_oauth_provider(
         self,
         name: str,
@@ -199,7 +252,9 @@ class AuthentikAPI:
         client_secret: str,
         redirect_uris: str,
         authorization_flow: str,
+        invalidation_flow: str,
         property_mappings: list[str],
+        grant_types: list[str] | None = None,
     ) -> int | None:
         """Create an OAuth2 provider.
 
@@ -209,26 +264,36 @@ class AuthentikAPI:
             client_secret: The OIDC client secret.
             redirect_uris: Newline separated redirect URIs.
             authorization_flow: The flow UUID.
+            invalidation_flow: The flow UUID.
             property_mappings: List of scope property mapping UUIDs.
+            grant_types: List of allowed OAuth2 grant types.
 
         Returns:
             The PK ID of the created provider if successful, otherwise None.
         """
         try:
+            if grant_types is None:
+                grant_types = ["authorization_code", "refresh_token", "client_credentials"]
+
             url = f"{self.base_url}/api/v3/providers/oauth2/"
             payload = {
                 "name": name,
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "redirect_uris": redirect_uris,
+                "redirect_uris": self._format_redirect_uris(redirect_uris),
                 "authorization_flow": authorization_flow,
+                "invalidation_flow": invalidation_flow,
                 "property_mappings": property_mappings,
+                "grant_types": grant_types,
             }
             response = self.session.post(url, json=payload, timeout=5)
             response.raise_for_status()
             return response.json().get("pk")
         except Exception as e:
-            logger.error("Failed to create OAuth provider %s: %s", name, e)
+            if hasattr(e, "response") and getattr(e, "response") is not None:
+                logger.error("Failed to create OAuth provider %s: %s, response: %s", name, e, getattr(e, "response").text)
+            else:
+                logger.error("Failed to create OAuth provider %s: %s", name, e)
         return None
 
     def update_oauth_provider(
@@ -239,7 +304,9 @@ class AuthentikAPI:
         client_secret: str,
         redirect_uris: str,
         authorization_flow: str,
+        invalidation_flow: str,
         property_mappings: list[str],
+        grant_types: list[str] | None = None,
     ) -> bool:
         """Update an existing OAuth2 provider.
 
@@ -250,26 +317,36 @@ class AuthentikAPI:
             client_secret: The OIDC client secret.
             redirect_uris: Newline separated redirect URIs.
             authorization_flow: The flow UUID.
+            invalidation_flow: The flow UUID.
             property_mappings: List of scope property mapping UUIDs.
+            grant_types: List of allowed OAuth2 grant types.
 
         Returns:
             True if successful, False otherwise.
         """
         try:
+            if grant_types is None:
+                grant_types = ["authorization_code", "refresh_token", "client_credentials"]
+
             url = f"{self.base_url}/api/v3/providers/oauth2/{provider_pk}/"
             payload = {
                 "name": name,
                 "client_id": client_id,
                 "client_secret": client_secret,
-                "redirect_uris": redirect_uris,
+                "redirect_uris": self._format_redirect_uris(redirect_uris),
                 "authorization_flow": authorization_flow,
+                "invalidation_flow": invalidation_flow,
                 "property_mappings": property_mappings,
+                "grant_types": grant_types,
             }
             response = self.session.put(url, json=payload, timeout=5)
             response.raise_for_status()
             return True
         except Exception as e:
-            logger.error("Failed to update OAuth provider %s: %s", provider_pk, e)
+            if hasattr(e, "response") and getattr(e, "response") is not None:
+                logger.error("Failed to update OAuth provider %s: %s, response: %s", provider_pk, e, getattr(e, "response").text)
+            else:
+                logger.error("Failed to update OAuth provider %s: %s", provider_pk, e)
         return False
 
     def create_application(self, name: str, slug: str, provider_pk: int) -> bool:
