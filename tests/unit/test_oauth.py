@@ -24,6 +24,7 @@ def mock_authentik_api(mocker: MockerFixture):
     # Setup standard mocked responses
     mock_api_instance.is_service_available.return_value = True
     mock_api_instance.get_authorization_flow_uuid.return_value = "test-flow-uuid"
+    mock_api_instance.get_invalidation_flow_uuid.return_value = "test-invalidation-flow-uuid"
     mock_api_instance.get_property_mappings.return_value = ["mapping-1", "mapping-2"]
     mock_api_instance.get_application.return_value = None  # Default to not existing yet
     mock_api_instance.create_oauth_provider.return_value = 123
@@ -437,7 +438,7 @@ def test_oauth_relation_reconcile_uses_cache(
         },
     )
 
-    config_str = "https://client.example.com/oauth/callback:test-flow-uuid:email,openid"
+    config_str = "https://client.example.com/oauth/callback:test-flow-uuid:test-invalidation-flow-uuid:email,openid"
     config_hash = hashlib.sha256(config_str.encode("utf-8")).hexdigest()
 
     peer_relation_with_cache = testing.PeerRelation(
@@ -453,6 +454,7 @@ def test_oauth_relation_reconcile_uses_cache(
                 }
             }),
             "authorization_flow_cache": "test-flow-uuid",
+            "invalidation_flow_cache": "test-invalidation-flow-uuid",
         },
     )
 
@@ -478,6 +480,7 @@ def test_oauth_relation_reconcile_uses_cache(
 
     # API calls should NOT be made since it's cached and fully in sync!
     mock_authentik_api.get_authorization_flow_uuid.assert_not_called()
+    mock_authentik_api.get_invalidation_flow_uuid.assert_not_called()
     mock_authentik_api.get_property_mappings.assert_not_called()
     mock_authentik_api.create_oauth_provider.assert_not_called()
     mock_authentik_api.update_oauth_provider.assert_not_called()

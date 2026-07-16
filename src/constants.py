@@ -35,6 +35,7 @@ SECRETS_PEER_KEY = "secrets_id"
 
 OAUTH_SYNC_CACHE_PEER_KEY = "oauth_sync_cache"
 AUTHORIZATION_FLOW_CACHE_PEER_KEY = "authorization_flow_cache"
+INVALIDATION_FLOW_CACHE_PEER_KEY = "invalidation_flow_cache"
 
 PEBBLE_READY_CHECK_NAME = "ready"
 
