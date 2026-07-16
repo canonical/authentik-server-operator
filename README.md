@@ -46,6 +46,12 @@ watch -c juju status --color
 
 Once the charms settle into an `active` and `idle` status, the Authentik Server is ready to use.
 
+### Terraform Deployment
+
+For environments where infrastructure-as-code is preferred, a production-ready set of Terraform modules (Core, Solution stack, and runnable Tutorial scenarios) are available.
+
+To learn how to provision the complete Authentik stack with a single command, please see the [Charmed Authentik Terraform Guide](terraform/README.md).
+
 ## Integrations
 
 ### PostgreSQL (`pg-database`)
