@@ -113,3 +113,45 @@ class TestCommandLine:
 
         with pytest.raises(MigrationFailedError):
             cli.check_migrations()
+
+    def test_create_recovery_key_success(
+        self, cli: CommandLine, mocked_container: MagicMock
+    ) -> None:
+        exec_mock = MagicMock()
+        exec_mock.wait_output.return_value = (
+            "http://localhost:8000/recovery/use-token/abcdef123456/\n",
+            "",
+        )
+        mocked_container.exec.return_value = exec_mock
+
+        path = cli.create_recovery_key("akadmin", 15)
+        assert path == "/recovery/use-token/abcdef123456/"
+        mocked_container.exec.assert_called_once_with(
+            ["/lifecycle/ak", "create_recovery_key", "15", "akadmin"],
+            environment=None,
+            service_context="authentik-server",
+        )
+
+    def test_create_recovery_key_parsing_failure(
+        self, cli: CommandLine, mocked_container: MagicMock
+    ) -> None:
+        exec_mock = MagicMock()
+        exec_mock.wait_output.return_value = ("Unexpected command output without token\n", "")
+        mocked_container.exec.return_value = exec_mock
+
+        with pytest.raises(ValueError) as exc_info:
+            cli.create_recovery_key("akadmin", 15)
+        assert "Failed to find recovery token path" in str(exc_info.value)
+
+    def test_create_recovery_key_exec_failure(
+        self, cli: CommandLine, mocked_container: MagicMock
+    ) -> None:
+        exec_error = ExecError(
+            command=["create_recovery_key"], exit_code=1, stdout="", stderr="Some failure"
+        )
+        exec_mock = MagicMock()
+        exec_mock.wait_output.side_effect = exec_error
+        mocked_container.exec.return_value = exec_mock
+
+        with pytest.raises(ExecError):
+            cli.create_recovery_key("akadmin", 15)

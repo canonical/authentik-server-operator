@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from ops import StatusBase, pebble, testing
+from ops.testing import ActionFailed
 from pytest_mock import MockerFixture
 from unit.conftest import create_state
 
@@ -662,3 +663,106 @@ class TestTLSFailure:
         mock_path.unlink.assert_called_with(missing_ok=True)
         container_out = state_out.get_container(WORKLOAD_CONTAINER)
         assert WORKLOAD_SERVICE not in container_out.layers
+
+
+class TestCharmActions:
+    def test_get_bootstrap_admin_credentials_success(
+        self,
+        context: testing.Context,
+        peer_relation: testing.PeerRelation,
+        authentik_secrets: testing.Secret,
+        all_satisfied_conditions: None,
+    ) -> None:
+        state = create_state(
+            relations=[peer_relation],
+            secrets=[authentik_secrets],
+        )
+
+        context.run(context.on.action("get-bootstrap-admin-credentials"), state)
+
+        assert context.action_results == {
+            "username": "akadmin",
+            "password": "test-bootstrap-password",
+            "bootstrap-token": "test-bootstrap-token",
+            "warning": (
+                "These are initial bootstrap credentials generated at deployment time. "
+                "If the administrator password was subsequently changed via the web UI or "
+                "recovery flows, the password returned here will be stale."
+            ),
+        }
+
+    def test_get_bootstrap_admin_credentials_secrets_not_ready(
+        self,
+        context: testing.Context,
+    ) -> None:
+        state = create_state(relations=[])
+
+        with pytest.raises(ActionFailed) as exc_info:
+            context.run(context.on.action("get-bootstrap-admin-credentials"), state)
+        assert "Admin credentials are not ready yet." in str(exc_info.value)
+
+    def test_create_recovery_link_success(
+        self,
+        context: testing.Context,
+        peer_relation: testing.PeerRelation,
+        authentik_secrets: testing.Secret,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        state = create_state(
+            relations=[peer_relation],
+            secrets=[authentik_secrets],
+        )
+
+        # Mock WorkloadService.create_recovery_link
+        mock_create_recovery_link = mocker.patch(
+            "charm.WorkloadService.create_recovery_link",
+            return_value="/recovery/use-token/token123/",
+        )
+
+        context.run(
+            context.on.action(
+                "create-recovery-link", params={"username": "user1", "duration": 15}
+            ),
+            state,
+        )
+
+        mock_create_recovery_link.assert_called_once_with("user1", 15)
+        assert context.action_results == {
+            "status": "success",
+            "url": "http://authentik-server.test-model.svc.cluster.local:9000/recovery/use-token/token123/",
+            "path": "/recovery/use-token/token123/",
+        }
+
+    def test_create_recovery_link_cannot_connect(
+        self,
+        context: testing.Context,
+    ) -> None:
+        state = create_state(can_connect=False)
+
+        with pytest.raises(ActionFailed) as exc_info:
+            context.run(context.on.action("create-recovery-link"), state)
+        assert "Cannot connect to the workload container" in str(exc_info.value)
+
+    def test_create_recovery_link_command_failure(
+        self,
+        context: testing.Context,
+        peer_relation: testing.PeerRelation,
+        authentik_secrets: testing.Secret,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        state = create_state(
+            relations=[peer_relation],
+            secrets=[authentik_secrets],
+        )
+
+        # Mock WorkloadService.create_recovery_link to raise an exception
+        mocker.patch(
+            "charm.WorkloadService.create_recovery_link",
+            side_effect=ValueError("Failed to run"),
+        )
+
+        with pytest.raises(ActionFailed) as exc_info:
+            context.run(context.on.action("create-recovery-link"), state)
+        assert "Failed to create recovery link" in str(exc_info.value)

@@ -3,6 +3,7 @@
 
 """Integration tests for the Authentik Server charm."""
 
+import json
 import logging
 import platform
 from pathlib import Path
@@ -127,6 +128,64 @@ def test_scale_up(juju: jubilant.Juju) -> None:
         error=any_error(APP_NAME),
         timeout=5 * 60,
     )
+
+
+def test_admin_actions(juju: jubilant.Juju) -> None:
+    """Test get-bootstrap-admin-credentials and create-recovery-link actions."""
+    # Run get-bootstrap-admin-credentials action
+    output_str = juju.cli(
+        "run", f"{APP_NAME}/0", "get-bootstrap-admin-credentials", "--format=json"
+    )
+    try:
+        results = json.loads(output_str)
+    except Exception:
+        results = output_str
+
+    if isinstance(results, dict):
+        unit_results = results.get(f"{APP_NAME}/0", {}).get("results", {})
+        if not unit_results and "results" in results:
+            unit_results = results["results"]
+        if not unit_results:
+            unit_results = results
+    else:
+        unit_results = {}
+
+    assert unit_results.get("username") == "akadmin", (
+        f"Expected username 'akadmin', got results: {results}"
+    )
+    assert "password" in unit_results
+    assert "bootstrap-token" in unit_results
+    assert "warning" in unit_results
+
+    # Run create-recovery-link action with custom parameters
+    output_str = juju.cli(
+        "run",
+        f"{APP_NAME}/0",
+        "create-recovery-link",
+        "username=akadmin",
+        "duration=15",
+        "--format=json",
+    )
+    try:
+        results = json.loads(output_str)
+    except Exception:
+        results = output_str
+
+    if isinstance(results, dict):
+        unit_results = results.get(f"{APP_NAME}/0", {}).get("results", {})
+        if not unit_results and "results" in results:
+            unit_results = results["results"]
+        if not unit_results:
+            unit_results = results
+    else:
+        unit_results = {}
+
+    assert unit_results.get("status") == "success", (
+        f"Expected status 'success', got results: {results}"
+    )
+    assert "url" in unit_results
+    assert "path" in unit_results
+    assert "/recovery/use-token/" in unit_results["path"]
 
 
 @pytest.mark.parametrize(

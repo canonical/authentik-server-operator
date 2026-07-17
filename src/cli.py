@@ -4,6 +4,7 @@
 """Helper class to access the Authentik CLI and management tools."""
 
 import logging
+import re
 
 from ops import Container
 from ops.pebble import ExecError
@@ -85,6 +86,32 @@ class CommandLine:
                     "database connection failed, please check credentials"
                 ) from e
             raise MigrationFailedError(f"database migration failed: {stderr[:50]}") from e
+
+    def create_recovery_key(self, username: str, duration: int) -> str:
+        """Create a recovery key for the specified user and return the path.
+
+        Args:
+            username: The username of the account to recover.
+            duration: The validity of the recovery link in minutes.
+
+        Returns:
+            The recovery path (e.g., /recovery/use-token/.../).
+
+        Raises:
+            ExecError: If running the command fails.
+            ValueError: If the recovery token path could not be parsed from output.
+        """
+        # Runs `/lifecycle/ak create_recovery_key <duration> <username>`
+        stdout, _ = self._run_cmd(
+            ["/lifecycle/ak", "create_recovery_key", str(duration), username],
+            service_context=WORKLOAD_SERVICE,
+        )
+
+        match = re.search(r"/recovery/use-token/[^/]+/?", stdout)
+        if not match:
+            raise ValueError(f"Failed to find recovery token path in command output: {stdout}")
+
+        return match.group(0)
 
     def _run_cmd(
         self,

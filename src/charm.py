@@ -8,6 +8,7 @@ import logging
 import re
 import subprocess
 from secrets import token_urlsafe
+from urllib.parse import urljoin
 
 import ops
 from charms.authentik_server.v0.authentik_cluster import AuthentikClusterProvider
@@ -206,6 +207,11 @@ class AuthentikServerCharm(ops.CharmBase):
         )
 
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
+        self.framework.observe(
+            self.on.get_bootstrap_admin_credentials_action,
+            self._on_get_bootstrap_admin_credentials,
+        )
+        self.framework.observe(self.on.create_recovery_link_action, self._on_create_recovery_link)
 
     @property
     def _authentik_host(self) -> str:
@@ -550,6 +556,44 @@ class AuthentikServerCharm(ops.CharmBase):
             event.add_status(ops.BlockedStatus(str(e)))
         except WorkloadNotRunningError:
             event.add_status(ops.WaitingStatus("waiting for the service to start"))
+
+    def _on_get_bootstrap_admin_credentials(self, event: ops.ActionEvent) -> None:
+        """Handle the get-bootstrap-admin-credentials action."""
+        if not self._secrets.is_ready():
+            event.fail("Admin credentials are not ready yet.")
+            return
+
+        event.set_results({
+            "username": "akadmin",
+            "password": self._secrets.bootstrap_password,
+            "bootstrap-token": self._secrets.bootstrap_token,
+            "warning": (
+                "These are initial bootstrap credentials generated at deployment time. "
+                "If the administrator password was subsequently changed via the web UI or "
+                "recovery flows, the password returned here will be stale."
+            ),
+        })
+
+    def _on_create_recovery_link(self, event: ops.ActionEvent) -> None:
+        """Handle the create-recovery-link action."""
+        if not self._container.can_connect():
+            event.fail("Cannot connect to the workload container.")
+            return
+
+        username = event.params.get("username", "akadmin")
+        duration = event.params.get("duration", 10)
+
+        try:
+            path = self._workload_service.create_recovery_link(username, duration)
+            url = urljoin(self._authentik_host, path)
+            event.set_results({
+                "status": "success",
+                "url": url,
+                "path": path,
+            })
+        except Exception as e:
+            logger.exception("Failed to create recovery link")
+            event.fail(f"Failed to create recovery link: {e}")
 
     def _resource_reqs_from_config(self) -> ResourceRequirements:
         """Build resource requirements from charm config."""
