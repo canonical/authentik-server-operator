@@ -455,7 +455,7 @@ class TestTraefikRouteEvents:
 
         assert (
             routers[router_key]["rule"]
-            == "PathPrefix(`/if`, `/flows`, `/api`, `/.well-known`, `/static`, `/media`, `/application/o`, `/outpost.goauthentik.io`, `/brand`, `/oauth2`, `/recovery`, `/source`)  || Path(`/`)"
+            == "PathPrefix(`/if`, `/flows`, `/api`, `/.well-known`, `/static`, `/media`, `/application/o`, `/outpost.goauthentik.io`, `/brand`, `/oauth2`, `/recovery`, `/source`) || Path(`/`)"
         )
         assert routers[router_key]["service"] == service_key
         assert routers[router_key]["tls"]["domains"][0]["main"] == "authentik.example.com"

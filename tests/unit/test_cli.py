@@ -30,7 +30,7 @@ class TestCommandLine:
         version = cli.get_version()
         assert version == "2026.3.1"
         mocked_container.exec.assert_called_once_with(
-            ["/lifecycle/ak", "version"], environment=None
+            ["/lifecycle/ak", "version"], environment=None, service_context=None
         )
 
     def test_get_version_fallback_success(
@@ -71,8 +71,9 @@ class TestCommandLine:
         # Should not raise
         cli.check_migrations()
         mocked_container.exec.assert_called_once_with(
-            ["/ak-root/.venv/bin/python", "-m", "authentik.manage", "migrate", "--check"],
-            environment={"PYTHONPATH": "/"},
+            ["/ak-root/.venv/bin/python", "-m", "manage", "migrate", "--check"],
+            environment=None,
+            service_context="authentik-server",
         )
 
     def test_check_migrations_pending(self, cli: CommandLine, mocked_container: MagicMock) -> None:

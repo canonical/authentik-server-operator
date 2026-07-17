@@ -8,6 +8,7 @@ import logging
 from ops import Container
 from ops.pebble import ExecError
 
+from constants import WORKLOAD_SERVICE
 from exceptions import DatabaseConnectionError, MigrationFailedError, MigrationPendingError
 
 logger = logging.getLogger(__name__)
@@ -69,11 +70,11 @@ class CommandLine:
                 [
                     "/ak-root/.venv/bin/python",
                     "-m",
-                    "authentik.manage",
+                    "manage",
                     "migrate",
                     "--check",
                 ],
-                environment={"PYTHONPATH": "/"},
+                service_context=WORKLOAD_SERVICE,
             )
         except ExecError as e:
             if e.exit_code == 1:
@@ -86,13 +87,17 @@ class CommandLine:
             raise MigrationFailedError(f"database migration failed: {stderr[:50]}") from e
 
     def _run_cmd(
-        self, cmd: list[str], environment: dict[str, str] | None = None
+        self,
+        cmd: list[str],
+        environment: dict[str, str] | None = None,
+        service_context: str | None = None,
     ) -> tuple[str, str]:
         """Run a command in the workload container.
 
         Args:
             cmd: The command to run.
             environment: Optional environment variables to set.
+            service_context: Optional service context to run in.
 
         Returns:
             A tuple of (stdout, stderr).
@@ -101,6 +106,8 @@ class CommandLine:
             PebbleError: If the container cannot connect or command execution fails.
         """
         logger.debug("Running command in container: %s", cmd)
-        process = self.container.exec(cmd, environment=environment)
+        process = self.container.exec(
+            cmd, environment=environment, service_context=service_context
+        )
         stdout, stderr = process.wait_output()
         return stdout, stderr
