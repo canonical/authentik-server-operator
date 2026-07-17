@@ -1,11 +1,11 @@
 ## Context
 
-Administrators currently have no out-of-band mechanism via Juju to recover their Authentik administrative passwords if database records get out of sync with the bootstrap credentials stored in Juju peer secrets. We need to introduce two actions: `get-admin-credentials` (to retrieve bootstrap keys with an explicit warning about stale states) and `create-recovery-link` (to generate a secure, native, single-use, time-bound recovery link in the browser).
+Administrators currently have no out-of-band mechanism via Juju to recover their Authentik administrative passwords if database records get out of sync with the bootstrap credentials stored in Juju peer secrets. We need to introduce two actions: `get-bootstrap-admin-credentials` (to retrieve bootstrap keys with an explicit warning about stale states) and `create-recovery-link` (to generate a secure, native, single-use, time-bound recovery link in the browser).
 
 ## Goals / Non-Goals
 
 **Goals:**
-* Define the action schema for `get-admin-credentials` and `create-recovery-link` in `charmcraft.yaml`.
+* Define the action schema for `get-bootstrap-admin-credentials` and `create-recovery-link` in `charmcraft.yaml`.
 * Implement the underlying CLI and service handlers cleanly according to the repository's physical separation design pattern.
 * Safely parse the recovery token and construct the external URL using standard-compliant `urllib.parse.urljoin`.
 * Provide integration test coverage executed specifically after the application scaling phase to verify these actions on active units.
@@ -24,7 +24,7 @@ Administrators currently have no out-of-band mechanism via Juju to recover their
 * **Decision**: Concat `self._authentik_host` and the parsed token path using `urllib.parse.urljoin` instead of string interpolation or `pathlib.Path`.
 * **Rationale**: Eliminates risks of missing or duplicate slashes or platform-specific directory delimiters.
 
-### 3. Add Warnings to `get-admin-credentials`
+### 3. Add Warnings to `get-bootstrap-admin-credentials`
 * **Decision**: Return a `warning` key in the action result dictionary and specify a warning in `charmcraft.yaml`.
 * **Rationale**: Explicitly alerts operators that the returned password is a bootstrap credential and may be stale if the password was changed via the UI or recovery flow.
 

@@ -666,7 +666,7 @@ class TestTLSFailure:
 
 
 class TestCharmActions:
-    def test_get_admin_credentials_success(
+    def test_get_bootstrap_admin_credentials_success(
         self,
         context: testing.Context,
         peer_relation: testing.PeerRelation,
@@ -678,7 +678,7 @@ class TestCharmActions:
             secrets=[authentik_secrets],
         )
 
-        context.run(context.on.action("get-admin-credentials"), state)
+        context.run(context.on.action("get-bootstrap-admin-credentials"), state)
 
         assert context.action_results == {
             "username": "akadmin",
@@ -691,14 +691,14 @@ class TestCharmActions:
             ),
         }
 
-    def test_get_admin_credentials_secrets_not_ready(
+    def test_get_bootstrap_admin_credentials_secrets_not_ready(
         self,
         context: testing.Context,
     ) -> None:
         state = create_state(relations=[])
 
         with pytest.raises(ActionFailed) as exc_info:
-            context.run(context.on.action("get-admin-credentials"), state)
+            context.run(context.on.action("get-bootstrap-admin-credentials"), state)
         assert "Admin credentials are not ready yet." in str(exc_info.value)
 
     def test_create_recovery_link_success(

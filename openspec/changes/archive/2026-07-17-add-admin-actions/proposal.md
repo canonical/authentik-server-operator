@@ -4,9 +4,9 @@ During deployments, administrator/bootstrap credentials in Juju secrets can fall
 
 ## What Changes
 
-- Add a Juju action `get-admin-credentials` to safely fetch the initial bootstrap username, password, and token currently stored in Juju secrets.
+- Add a Juju action `get-bootstrap-admin-credentials` to safely fetch the initial bootstrap username, password, and token currently stored in Juju secrets.
 - Add a Juju action `create-recovery-link` to dynamically generate a secure, single-use, time-bound admin recovery link using Authentik's native command-line utility.
-- Expose clear warnings in `get-admin-credentials` command outputs and descriptions indicating that returned bootstrap passwords do not reflect subsequent runtime changes.
+- Expose clear warnings in `get-bootstrap-admin-credentials` command outputs and descriptions indicating that returned bootstrap passwords do not reflect subsequent runtime changes.
 
 ## Non-goals
 

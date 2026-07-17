@@ -86,7 +86,7 @@ config:
       default: 0
 
 actions:
-  get-admin-credentials:
+  get-bootstrap-admin-credentials:
     description: |
       Retrieve the initial bootstrap administrator credentials currently stored in Juju secrets.
       WARNING: These are the initial deployment credentials. If the password has been

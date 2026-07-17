@@ -4,10 +4,10 @@
 This specification defines requirements for administrator access and recovery mechanisms of the Authentik service charm, including retrieving initial bootstrap credentials and generating secure, time-bound recovery keys.
 ## Requirements
 ### Requirement: Fetch Admin Credentials
-The charm SHALL support a `get-admin-credentials` action to fetch the initial bootstrap administrator credentials stored in Juju secrets. The action output SHALL include the username, initial bootstrap password, bootstrap token, and a clear warning indicating that subsequent web-based password modifications are not synchronized.
+The charm SHALL support a `get-bootstrap-admin-credentials` action to fetch the initial bootstrap administrator credentials stored in Juju secrets. The action output SHALL include the username, initial bootstrap password, bootstrap token, and a clear warning indicating that subsequent web-based password modifications are not synchronized.
 
 #### Scenario: Successful retrieval of bootstrap credentials
-- **WHEN** the operator triggers the `get-admin-credentials` action and secrets are ready
+- **WHEN** the operator triggers the `get-bootstrap-admin-credentials` action and secrets are ready
 - **THEN** the action SHALL return the correct username, password, token, and the warning banner
 
 ### Requirement: Create Recovery Link

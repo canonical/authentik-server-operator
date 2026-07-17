@@ -208,7 +208,8 @@ class AuthentikServerCharm(ops.CharmBase):
 
         self.framework.observe(self.on.collect_unit_status, self._on_collect_status)
         self.framework.observe(
-            self.on.get_admin_credentials_action, self._on_get_admin_credentials
+            self.on.get_bootstrap_admin_credentials_action,
+            self._on_get_bootstrap_admin_credentials,
         )
         self.framework.observe(self.on.create_recovery_link_action, self._on_create_recovery_link)
 
@@ -556,8 +557,8 @@ class AuthentikServerCharm(ops.CharmBase):
         except WorkloadNotRunningError:
             event.add_status(ops.WaitingStatus("waiting for the service to start"))
 
-    def _on_get_admin_credentials(self, event: ops.ActionEvent) -> None:
-        """Handle the get-admin-credentials action."""
+    def _on_get_bootstrap_admin_credentials(self, event: ops.ActionEvent) -> None:
+        """Handle the get-bootstrap-admin-credentials action."""
         if not self._secrets.is_ready():
             event.fail("Admin credentials are not ready yet.")
             return

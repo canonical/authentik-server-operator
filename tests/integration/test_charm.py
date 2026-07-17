@@ -131,9 +131,11 @@ def test_scale_up(juju: jubilant.Juju) -> None:
 
 
 def test_admin_actions(juju: jubilant.Juju) -> None:
-    """Test get-admin-credentials and create-recovery-link actions."""
-    # Run get-admin-credentials action
-    output_str = juju.cli("run", f"{APP_NAME}/0", "get-admin-credentials", "--format=json")
+    """Test get-bootstrap-admin-credentials and create-recovery-link actions."""
+    # Run get-bootstrap-admin-credentials action
+    output_str = juju.cli(
+        "run", f"{APP_NAME}/0", "get-bootstrap-admin-credentials", "--format=json"
+    )
     try:
         results = json.loads(output_str)
     except Exception:

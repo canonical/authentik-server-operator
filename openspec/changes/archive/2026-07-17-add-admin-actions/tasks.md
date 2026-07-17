@@ -1,6 +1,6 @@
 ## 1. Action Declarations
 
-- [x] 1.1 Declare the `get-admin-credentials` and `create-recovery-link` actions with clear descriptions, parameters, and stale password warnings in [charmcraft.yaml](file:///home/nikos.sklikas@canonical.com/projects/authentik-charms/authentik-server-operator-admin-cmd/charmcraft.yaml).
+- [x] 1.1 Declare the `get-bootstrap-admin-credentials` and `create-recovery-link` actions with clear descriptions, parameters, and stale password warnings in [charmcraft.yaml](file:///home/nikos.sklikas@canonical.com/projects/authentik-charms/authentik-server-operator-admin-cmd/charmcraft.yaml).
 
 ## 2. Low-Level Workload Executions
 
