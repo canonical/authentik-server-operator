@@ -26,6 +26,16 @@ class CharmConfig:
             "HTTPS_PROXY": self._config.get("https_proxy") or "",
             "NO_PROXY": self._config.get("no_proxy") or "",
             "AUTHENTIK_WEB__WORKERS": str(self._config.get("web_workers", 2)),
+            # Database pooling tunings
+            "AUTHENTIK_POSTGRESQL__DISABLE_SERVER_SIDE_CURSORS": str(
+                self._config.get("postgresql_disable_server_side_cursors", False)
+            ).lower(),
+            "AUTHENTIK_POSTGRESQL__CONN_HEALTH_CHECKS": str(
+                self._config.get("postgresql_conn_health_checks", False)
+            ).lower(),
+            "AUTHENTIK_POSTGRESQL__CONN_MAX_AGE": str(
+                self._config.get("postgresql_conn_max_age", 0)
+            ),
         }
 
     def get_missing_config_keys(self) -> list:

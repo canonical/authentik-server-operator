@@ -126,8 +126,7 @@ class AuthentikAPI:
         """
         try:
             url = (
-                f"{self.base_url}/api/v3/flows/instances/?"
-                "slug=default-provider-invalidation-flow"
+                f"{self.base_url}/api/v3/flows/instances/?slug=default-provider-invalidation-flow"
             )
             response = self.session.get(url, timeout=5)
             response.raise_for_status()
@@ -232,17 +231,16 @@ class AuthentikAPI:
 
         processed_redirect_uris = []
         if isinstance(redirect_uris, str):
-            uris_list = [u.strip() for f in redirect_uris.splitlines() for u in f.split(",") if u.strip()]
+            uris_list = [
+                u.strip() for f in redirect_uris.splitlines() for u in f.split(",") if u.strip()
+            ]
         elif isinstance(redirect_uris, list):
             uris_list = [str(u).strip() for u in redirect_uris if str(u).strip()]
         else:
             uris_list = []
 
         for uri in uris_list:
-            processed_redirect_uris.append({
-                "matching_mode": "strict",
-                "url": uri
-            })
+            processed_redirect_uris.append({"matching_mode": "strict", "url": uri})
         return processed_redirect_uris
 
     def create_oauth_provider(
@@ -291,7 +289,12 @@ class AuthentikAPI:
             return response.json().get("pk")
         except Exception as e:
             if hasattr(e, "response") and getattr(e, "response") is not None:
-                logger.error("Failed to create OAuth provider %s: %s, response: %s", name, e, getattr(e, "response").text)
+                logger.error(
+                    "Failed to create OAuth provider %s: %s, response: %s",
+                    name,
+                    e,
+                    getattr(e, "response").text,
+                )
             else:
                 logger.error("Failed to create OAuth provider %s: %s", name, e)
         return None
@@ -344,7 +347,12 @@ class AuthentikAPI:
             return True
         except Exception as e:
             if hasattr(e, "response") and getattr(e, "response") is not None:
-                logger.error("Failed to update OAuth provider %s: %s, response: %s", provider_pk, e, getattr(e, "response").text)
+                logger.error(
+                    "Failed to update OAuth provider %s: %s, response: %s",
+                    provider_pk,
+                    e,
+                    getattr(e, "response").text,
+                )
             else:
                 logger.error("Failed to update OAuth provider %s: %s", provider_pk, e)
         return False

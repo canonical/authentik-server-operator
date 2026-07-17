@@ -180,14 +180,18 @@ class OauthReconciler:
             property_mappings=property_mappings,
         )
         if not actual_slug or provider_pk is None:
-            raise RuntimeError(f"Failed to sync Authentik provider and application for relation {relation.id}")
+            raise RuntimeError(
+                f"Failed to sync Authentik provider and application for relation {relation.id}"
+            )
 
         # Sync succeeded! Save client credentials to relation data if newly generated
         if is_new:
             self._charm.oauth_provider.set_client_credentials_in_relation_data(
                 relation.id, client_id, client_secret
             )
-            logger.info("Saved generated client credentials to relation data for relation %s", relation.id)
+            logger.info(
+                "Saved generated client credentials to relation data for relation %s", relation.id
+            )
 
         # Update the sync cache
         oauth_sync_cache[str(relation.id)] = {
