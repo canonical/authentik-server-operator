@@ -167,6 +167,18 @@ class WorkloadService:
         if ready_check.status != CheckStatus.UP or (ready_check.successes or 0) == 0:
             raise WorkloadNotRunningError("Service is starting up")
 
+    def create_recovery_link(self, username: str, duration: int) -> str:
+        """Create a recovery key for the specified user and return the path.
+
+        Args:
+            username: The username of the account to recover.
+            duration: The validity of the recovery link in minutes.
+
+        Returns:
+            The recovery path.
+        """
+        return self._cli.create_recovery_key(username, duration)
+
     def update_ca_certs(self) -> bool:
         """Update the CA certificates in the workload container.
 

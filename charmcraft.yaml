@@ -86,6 +86,25 @@ config:
       default: 0
 
 actions:
+  get-admin-credentials:
+    description: |
+      Retrieve the initial bootstrap administrator credentials currently stored in Juju secrets.
+      WARNING: These are the initial deployment credentials. If the password has been
+      changed via the web UI or recovery flows, the password returned here will be stale.
+  create-recovery-link:
+    description: |
+      Generate a temporary, single-use recovery link for any user (defaulting to 'akadmin').
+      This link bypasses standard login flows, granting direct administrative access
+      via the web UI to allow resetting passwords or repairing configuration safely.
+    params:
+      username:
+        type: string
+        description: The username of the account to recover.
+        default: akadmin
+      duration:
+        type: integer
+        description: The validity of the recovery link in minutes.
+        default: 10
 
 requires:
   logging:
