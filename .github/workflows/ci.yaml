@@ -22,7 +22,7 @@ jobs:
     uses: canonical/identity-team/.github/workflows/charm-pull-request.yaml@b5070d98993fa72f429f4fdf8010f6f9a94eb4e0 # v1.14.2
     with:
       container-name: "authentik-server"
-      use-charmcraftcache: false
+      use-charmcraftcache: true
       node-size: medium
       pytest-model-option: '--juju-model'
       juju-model-name: 'testing'
