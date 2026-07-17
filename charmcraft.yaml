@@ -66,6 +66,24 @@ config:
         A value below 2 is not recommended.
       type: int
       default: 2
+    postgresql_disable_server_side_cursors:
+      description: |
+        Set to true when utilizing transaction pooling (e.g. PgBouncer or Pgpool)
+        to prevent database cursors from breaking across connections.
+      type: boolean
+      default: false
+    postgresql_conn_health_checks:
+      description: |
+        When true, Authentik will run a quick connectivity test on every database connection
+        request to detect and discard stale or dead sockets proactively.
+      type: boolean
+      default: false
+    postgresql_conn_max_age:
+      description: |
+        Maximum lifetime of a database connection in seconds. Set to 0 to force immediate
+        recycling of connections, or a low positive integer to limit connection age.
+      type: int
+      default: 0
 
 actions:
 

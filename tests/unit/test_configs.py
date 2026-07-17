@@ -17,6 +17,9 @@ class TestCharmConfig:
             "https_proxy": "http://proxy:6666",
             "no_proxy": "localhost",
             "web_workers": 4,
+            "postgresql_disable_server_side_cursors": True,
+            "postgresql_conn_health_checks": True,
+            "postgresql_conn_max_age": 120,
         }
 
     @pytest.fixture
@@ -34,6 +37,9 @@ class TestCharmConfig:
         assert env["HTTPS_PROXY"] == "http://proxy:6666"
         assert env["NO_PROXY"] == "localhost"
         assert env["AUTHENTIK_WEB__WORKERS"] == "4"
+        assert env["AUTHENTIK_POSTGRESQL__DISABLE_SERVER_SIDE_CURSORS"] == "true"
+        assert env["AUTHENTIK_POSTGRESQL__CONN_HEALTH_CHECKS"] == "true"
+        assert env["AUTHENTIK_POSTGRESQL__CONN_MAX_AGE"] == "120"
 
     def test_to_env_vars_defaults(self, minimal_config: dict) -> None:
         config = CharmConfig(minimal_config)
@@ -44,6 +50,9 @@ class TestCharmConfig:
         assert env["HTTPS_PROXY"] == ""
         assert env["NO_PROXY"] == ""
         assert env["AUTHENTIK_WEB__WORKERS"] == "2"
+        assert env["AUTHENTIK_POSTGRESQL__DISABLE_SERVER_SIDE_CURSORS"] == "false"
+        assert env["AUTHENTIK_POSTGRESQL__CONN_HEALTH_CHECKS"] == "false"
+        assert env["AUTHENTIK_POSTGRESQL__CONN_MAX_AGE"] == "0"
 
     def test_get_missing_config_keys(self, minimal_config: dict) -> None:
         config = CharmConfig(minimal_config)
