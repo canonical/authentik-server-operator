@@ -2,7 +2,7 @@
 # See LICENSE file for licensing details.
 
 module "authentik_server" {
-  source = "github.com/canonical/authentik-server-operator//terraform"
+  source = "../"
 
   model_uuid  = data.juju_model.this.uuid
   app_name    = var.authentik_server.name
