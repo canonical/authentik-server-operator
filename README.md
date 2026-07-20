@@ -52,6 +52,20 @@ For environments where infrastructure-as-code is preferred, a production-ready s
 
 To learn how to provision the complete Authentik stack with a single command, please see the [Charmed Authentik Terraform Guide](terraform/README.md).
 
+### Documentation
+
+Please see our comprehensive documentation guides located in the [docs/](docs/) folder:
+- **Tutorials**: [Getting Started with Charmed Authentik](docs/tutorials/getting-started.md)
+- **How-To Guides**:
+  - [How to Bootstrap Charmed Authentik](docs/how-to/bootstrap-authentik.md)
+  - [How to Protect OIDC/OAuth Applications](docs/how-to/protect-oidc-oauth-applications.md)
+  - [How to Protect LDAP Applications](docs/how-to/protect-ldap-applications.md)
+  - [How to Integrate Upstream Identity Providers](docs/how-to/integrate-upstream-provider.md)
+  - [How to Manage Users and Groups](docs/how-to/manage-users-and-groups.md)
+  - [Common Operational Administration Tasks](docs/how-to/common-admin-tasks.md)
+- **Reference**: [Charmed Authentik Configuration Reference](docs/reference/configurations.md)
+- **Explanation**: [Charmed Authentik Architecture & Security Design](docs/explanation/architecture.md)
+
 ## Integrations
 
 ### PostgreSQL (`pg-database`)
