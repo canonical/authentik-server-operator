@@ -59,6 +59,21 @@ resource "juju_integration" "ingress_route" {
   model_uuid = data.juju_model.this.uuid
 }
 
+# Ingress Route cross-model integration for LDAP Outpost
+resource "juju_integration" "ingress_route_ldap" {
+  application {
+    offer_url = data.juju_offer.traefik_route.url
+  }
+
+  application {
+    name     = module.authentik_ldap_outpost.application.name
+    endpoint = "traefik-route"
+  }
+
+  model_uuid = data.juju_model.this.uuid
+}
+
+
 # Optional COS (observability) integrations for Server
 resource "juju_integration" "metrics" {
   count = var.metrics_offer_url != null ? 1 : 0
