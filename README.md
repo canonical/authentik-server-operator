@@ -95,24 +95,19 @@ Charmed Authentik Server offers seamless integration with the Canonical Observab
 
 ### Retrieving Bootstrap Credentials
 
-On the first start, Charmed Authentik Server automatically generates secure bootstrap credentials for the default administrator account, **`akadmin`**. These credentials are saved as a Juju secret.
+On the first start, Charmed Authentik Server automatically generates secure bootstrap credentials for the default administrator account, **`akadmin`**.
 
-To retrieve the generated password and token:
+To retrieve the generated password and token, run the `get-bootstrap-admin-credentials` action on the leader unit:
 
-1. List the secrets in your model and find the ID associated with the `authentik-server-secrets` label:
-   ```shell
-   juju secrets --label authentik-server-secrets
-   ```
+```shell
+juju run authentik-server/leader get-bootstrap-admin-credentials
+```
 
-2. Retrieve and reveal the secret contents using the secret URI (e.g., `secret:1234567890abc`):
-   ```shell
-   juju show-secret secret:<secret_id> --reveal
-   ```
-
-The revealed output will contain:
-*   `bootstrap-password`: The password for the `akadmin` user.
+The output will contain:
+*   `username`: The default administrator user (`akadmin`).
+*   `password`: The generated secure administrator password.
 *   `bootstrap-token`: The initial API bootstrap token.
-*   `secret-key`: The encryption key used by the Authentik server.
+
 
 ## Security
 
