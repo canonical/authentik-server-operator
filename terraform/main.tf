@@ -24,3 +24,11 @@ resource "juju_application" "authentik_server" {
     revision = var.revision
   }
 }
+
+resource "juju_offer" "oauth" {
+  name             = "oauth"
+  model_uuid       = var.model_uuid
+  application_name = juju_application.authentik_server.name
+  endpoints        = ["oauth"]
+}
+

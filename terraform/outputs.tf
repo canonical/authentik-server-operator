@@ -28,3 +28,11 @@ output "requires" {
     smtp            = "smtp"
   }
 }
+
+output "offers" {
+  description = "The Juju offers that the charm provides"
+  value = {
+    oauth = juju_offer.oauth
+  }
+}
+
