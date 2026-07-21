@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/canonical/authentik-server-operator/compare/v1.0.0...v1.1.0) (2026-07-21)
+
+
+### Features
+
+* **terraform:** add oauth juju offer ([#55](https://github.com/canonical/authentik-server-operator/issues/55)) ([9657310](https://github.com/canonical/authentik-server-operator/commit/9657310504d399714521f1d70140c37f205f4721))
+* **terraform:** integrate LDAP outpost with traefik-route cross-model offer ([ca8edd8](https://github.com/canonical/authentik-server-operator/commit/ca8edd8ab139917d216f422918f4110e6750aae5))
+* **terraform:** integrate LDAP outpost with traefik-route cross-model offer ([#58](https://github.com/canonical/authentik-server-operator/issues/58)) ([29992d6](https://github.com/canonical/authentik-server-operator/commit/29992d69471e5db33d12d9b31d83b278e1f26fa9))
+
+
+### Bug Fixes
+
+* add oauth juju offer ([1c83cc6](https://github.com/canonical/authentik-server-operator/commit/1c83cc620062682f37cb447de791d96f6857afac))
+
 ## 1.0.0 (2026-07-17)
 
 
