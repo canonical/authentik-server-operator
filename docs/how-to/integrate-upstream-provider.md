@@ -5,6 +5,15 @@ This guide describes how to configure Charmed Authentik to delegate authenticati
 
 ---
 
+## Prerequisites
+
+This guide assumes you have an active Charmed Authentik deployment matching the topology established in the [Getting Started Tutorial](../tutorials/getting-started.md). Specifically, you should have:
+* An active `authentik-server` deployment integrated with its database and certificates.
+* Access to the Authentik admin dashboard via your administrator credentials (`akadmin`).
+* A reachable upstream identity provider (OIDC social provider or LDAP server) configured and accessible from your Kubernetes cluster.
+
+---
+
 ## 1. Upstream SAML / OIDC Social Login & Federation
 
 By configuring upstream federation, you can allow users to log in to your Authentik domain using external credentials (e.g. Google Workspace, Microsoft Entra ID, Okta, or Keycloak).
@@ -17,14 +26,18 @@ These settings are managed dynamically through the Authentik Admin Interface:
    - In the sidebar, navigate to **Directory** $\rightarrow$ **Federation & Social Login**.
    - Click **Create** and select your target provider type (e.g. **OpenID Connect Source**, **SAML Source**, or pre-configured social templates like **Google** or **Microsoft**).
 3. **Configure Upstream Metadata**:
-   - Enter a user-facing **Name** (e.g. `Corporate-EntraID`).
+   - Enter a user-facing **Name** (e.g. `Google`).
    - Enter your upstream Client ID and Client Secret.
    - For standard OIDC, supply the **Authorization URL**, **Token URL**, and **User-info URL** (or use the automatic Discovery/Issuer URL).
 4. **Define Login Flows**:
-   - Bind the upstream source to an administrative flow (e.g. `default-source-enrollment`) to automatically provision user profiles in Authentik’s internal database upon successful social authentication.
-5. **Verify Login Option**:
+   - Bind the upstream source to an administrative flow (e.g., `default-source-enrollment`) to automatically provision user profiles in Authentik’s internal database upon successful social authentication.
+5. **Add Source to Identification Stage (Required for Visibility)**:
+   - To make the federated login button appear on your main portal login screen, navigate to **Flows and Stages** $\rightarrow$ **Stages**.
+   - Locate and edit the **default-authentication-identification** stage.
+   - In the **Sources** field, select your newly created social/federated source (e.g., `Google`) and save the changes.
+6. **Verify Login Option**:
    - Log out of your Authentik session.
-   - The default login portal will now display your new federated login button (e.g. **"Log in with Corporate-EntraID"**).
+   - The default login portal will now display your new federated login button (e.g., **"Continue with Google"**).
 
 ---
 

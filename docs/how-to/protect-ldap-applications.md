@@ -5,7 +5,16 @@ This guide walks you through deploying the **Charmed Authentik LDAP Outpost** an
 
 ---
 
-## Step 1 (Optional): Deploy the LDAP Outpost & Relate to Authentik Server
+## Prerequisites
+
+This guide assumes you have an active Charmed Authentik deployment matching the topology established in the [Getting Started Tutorial](../tutorials/getting-started.md). Specifically, you should have:
+* An active `authentik-server` deployment integrated with its database and certificates.
+* An active Traefik Ingress controller (`traefik-public`) deployed (typically in a shared administrative model, e.g., `core`).
+* Administrative access (`akadmin`) to the Authentik dashboard.
+
+---
+
+## Step 1 (Optional): Deploy the LDAP Outpost & Integrate with Authentik Server
 
 > [!NOTE]
 > This step is **optional** if you used the recommended solution bundle or the tutorial Terraform blueprint, which pre-installs and integrates the LDAP Outpost automatically. You only need to execute these commands if you are adding an Outpost manually to an existing custom deployment.
@@ -17,9 +26,9 @@ The LDAP Outpost acts as a secure directory gateway. It does not connect directl
    juju deploy authentik-ldap-outpost --channel edge --trust
    ```
 
-2. **Relate the Outpost to the core Server**:
+2. **Integrate the Outpost with the core Server**:
    ```bash
-   juju relate authentik-ldap-outpost:authentik-server-info authentik-server:authentik-server-info
+   juju integrate authentik-ldap-outpost:authentik-server-info authentik-server:authentik-server-info
    ```
    *This shares the API endpoints and administrative registration token required for the Outpost to query the Authentik core service.*
 
@@ -30,17 +39,17 @@ The LDAP Outpost acts as a secure directory gateway. It does not connect directl
 To connect an LDAP-compliant consumer charm (we will use **`sssd`** as our client example), establish an integration with the Outpost:
 
 ```bash
-juju relate sssd:ldap-client authentik-ldap-outpost:ldap
+juju integrate sssd:ldap-client authentik-ldap-outpost:ldap
 ```
 
 ### A. Managing TLS Certificate Trust (Required for LDAPS)
 Because the Outpost operates strictly over secure LDAPS (Port 636) in production, downstream clients must trust the Certificate Authority (CA) chain that issued the Outpost's SSL certificate.
 
-To dynamically distribute the CA chain, relate your consumer client to your certificate authority provider (such as `self-signed-certificates` or `lego`) using the `certificate_transfer` interface:
+To dynamically distribute the CA chain, integrate your consumer client with your certificate authority provider (such as `self-signed-certificates` or `lego`) using the `certificate_transfer` interface:
 
 ```bash
 # Transfer the CA chain to SSSD so it can securely verify the LDAPS session
-juju relate sssd:receive-ca-cert self-signed-certificates:send-ca-cert
+juju integrate sssd:receive-ca-cert self-signed-certificates:send-ca-cert
 ```
 
 ### B. Behind the Scenes: Dynamic Service Accounts
@@ -89,14 +98,19 @@ If you deploy multiple independent outposts sharing a single Traefik Ingress con
    juju config outpost-primary ingress_domain="outpost-primary.identity.example.com"
    juju config outpost-secondary ingress_domain="outpost-secondary.identity.example.com"
    ```
-2. **Relate both outposts to Traefik**:
+2. **Integrate both outposts with Traefik**:
    ```bash
-   juju relate outpost-primary:traefik-route traefik-k8s:traefik-route
-   juju relate outpost-secondary:traefik-route traefik-k8s:traefik-route
+   # If Traefik is in the same model:
+   juju integrate outpost-primary:traefik-route traefik-public:traefik-route
+   juju integrate outpost-secondary:traefik-route traefik-public:traefik-route
+
+   # If Traefik is in a different model (e.g., 'core'):
+   juju integrate outpost-primary:traefik-route core.traefik-public:traefik-route
+   juju integrate outpost-secondary:traefik-route core.traefik-public:traefik-route
    ```
 
 ### B. Client IP Propagation (Proxy Protocol v2)
-In production, to preserve client source IPs for auditing and rate-limiting, relate Traefik to the Outpost:
+In production, to preserve client source IPs for auditing and rate-limiting, integrate Traefik with the Outpost:
 * The `traefik-route` relation automatically configures Traefik to prepend Proxy Protocol v2 headers on raw L4 TCP streams.
 * The Outpost automatically trusts Kubernetes RFC 1918 subnets, securely decoding the client IP address from the headers and shielding your cluster from distributed brute-force lockout issues.
 
@@ -107,7 +121,7 @@ In production, to preserve client source IPs for auditing and rate-limiting, rel
 For specialized production use cases, the `authentik-ldap-outpost` charm provides several configuration parameters to customize security policies, performance behaviors, and authentication workflows.
 
 ### 1. `search_group` (Customizing Read Restrictions)
-By default, Charmed Authentik restricts LDAP directory search queries to users belonging to the `"authentik Admingroup"`. When a downstream application relates over the `ldap` interface, the charm automatically creates a service account user and adds it to this group.
+By default, Charmed Authentik restricts LDAP directory search queries to users belonging to the `"authentik Admingroup"`. When a downstream application integrates over the `ldap` interface, the charm automatically creates a service account user and adds it to this group.
 
 If you have manually modified your Authentik directory rules to restrict search queries to a custom group (e.g. `ldap-readers`), configure the charm to associate newly created service accounts to this group:
 ```bash

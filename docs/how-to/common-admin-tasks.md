@@ -99,24 +99,24 @@ juju config authentik-worker consumer-listen-timeout=5
 
 ## 4. Enabling Observability (COS Integration)
 
-To monitor application latency, trace transaction spans, and inspect central logs, relate your Authentik cluster with the **Canonical Observability Stack (COS)**:
+To monitor application latency, trace transaction spans, and inspect central logs, integrate your Authentik cluster with the **Canonical Observability Stack (COS)**:
 
 ### Step 1: Forward Logs to Loki
 ```bash
-juju relate authentik-server:logging loki-k8s:logging
-juju relate authentik-worker:logging loki-k8s:logging
+juju integrate authentik-server:logging loki-k8s:logging
+juju integrate authentik-worker:logging loki-k8s:logging
 ```
 
 ### Step 2: Forward Telemetry Metrics to Prometheus
 Expose scrape metrics on Port 9300 for active monitoring:
 ```bash
-juju relate authentik-server:metrics-endpoint prometheus-k8s:metrics-endpoint
-juju relate authentik-worker:metrics-endpoint prometheus-k8s:metrics-endpoint
+juju integrate authentik-server:metrics-endpoint prometheus-k8s:metrics-endpoint
+juju integrate authentik-worker:metrics-endpoint prometheus-k8s:metrics-endpoint
 ```
 
 ### Step 3: Stream Application Traces to Tempo
 Monitor and diagnose API latency bottlenecks:
 ```bash
-juju relate authentik-server:tracing tempo-k8s:tracing
-juju relate authentik-worker:tracing tempo-k8s:tracing
+juju integrate authentik-server:tracing tempo-k8s:tracing
+juju integrate authentik-worker:tracing tempo-k8s:tracing
 ```
