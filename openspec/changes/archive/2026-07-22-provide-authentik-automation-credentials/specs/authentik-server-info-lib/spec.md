@@ -1,9 +1,5 @@
-# authentik-server-info-lib Specification
+## MODIFIED Requirements
 
-## Purpose
-
-The `authentik-server-info` library defines the provider/requirer contract by which the Authentik Server charm shares its API endpoint and control-plane API token with in-model consumers (such as the LDAP outpost). It specifies how the leader publishes the Authentik host and a Juju-secret-backed API token, how consumers resolve that token, and the library revisioning discipline that lets consumers detect contract changes.
-## Requirements
 ### Requirement: AuthentikServerInfoProvider must publish host and credentials to relation databag
 
 `lib/charms/authentik_server/v0/authentik_server_info.py` MUST implement `AuthentikServerInfoProvider`. When the leader unit publishes server info with an Authentik host and API token, the provider MUST:
@@ -40,14 +36,3 @@ Given the provider has written `authentik_host` and `authentik_token_secret_id` 
 #### Scenario: on.ready fires when host and token secret id are present
 
 Given the requirer observes `relation_changed`, when the provider writes `authentik_host` and `authentik_token_secret_id`, then the requirer ready event is emitted.
-
-### Requirement: LIBPATCH must be incremented after changes to authentik_server_info library
-
-Any modification to `lib/charms/authentik_server/v0/authentik_server_info.py` MUST
-increment the `LIBPATCH` constant so consumers can detect the update.
-
-#### Scenario: LIBPATCH is incremented
-
-Given the library file has been modified, when the file is inspected, then the
-`LIBPATCH` value is greater than before the change.
-

@@ -34,3 +34,31 @@ class MigrationPendingError(CharmError):
 
 class MigrationFailedError(CharmError):
     """Database migrations failed."""
+
+
+class AuthentikAPIError(Exception):
+    """Base class for Authentik API errors that must fail reconciliation."""
+
+
+class AuthentikNotFoundError(AuthentikAPIError):
+    """An Authentik resource does not exist."""
+
+
+class AuthentikAuthenticationError(AuthentikAPIError):
+    """Authentik rejected the API credentials."""
+
+
+class AuthentikAuthorizationError(AuthentikAPIError):
+    """The API credentials cannot perform the requested operation."""
+
+
+class AuthentikConflictError(AuthentikAPIError):
+    """The Authentik request conflicts with existing state."""
+
+
+class AuthentikTransientError(AuthentikAPIError):
+    """A transient Authentik transport or server failure exhausted its retry budget."""
+
+
+class AuthentikRequestValidationError(AuthentikAPIError):
+    """Authentik rejected a permanently invalid request."""

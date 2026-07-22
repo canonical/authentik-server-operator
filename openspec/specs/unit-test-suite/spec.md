@@ -1,5 +1,8 @@
-## ADDED Requirements
+# unit-test-suite Specification
 
+## Purpose
+Defines the unit-test suite conventions for the Authentik Server charm: a shared `create_state()` factory and deterministic Scenario-based tests covering the charm's event handlers, integrations, services, secrets, and Authentik API client, so regressions in observable behavior are caught without a live cluster.
+## Requirements
 ### Requirement: Conftest provides create_state() factory
 The `tests/unit/conftest.py` module SHALL provide a module-level `create_state()` factory function (not a fixture) that builds a complete `testing.State` with sensible defaults: `leader=True`, `can_connect=True`, a `WORKLOAD_CONTAINER` container with `ak version` exec mock, and empty relations/secrets/config.
 
@@ -24,7 +27,7 @@ The `tests/unit/conftest.py` module SHALL provide a `@pytest.fixture` for every 
 
 #### Scenario: Peer relation fixture
 - **WHEN** the `peer_relation` fixture is used
-- **THEN** it returns a `testing.PeerRelation` with endpoint `authentik-peers` and interface `authentik_peers`, with no secret IDs in local app data (secrets are looked up by label)
+- **THEN** it returns a `testing.PeerRelation` with endpoint `authentik-peers` and interface `authentik_peers`, with the consolidated secret ID in local app data
 
 ### Requirement: Conftest provides condition mock fixtures
 The `tests/unit/conftest.py` module SHALL provide `@pytest.fixture` mocks for each condition function and service method used in `_on_collect_status` and `NOOP_CONDITIONS`: `mocked_container_connectivity`, `mocked_database_integration_exists`, `mocked_database_resource_is_created`, `mocked_secrets_is_ready`, `mocked_workload_is_running`, `mocked_workload_is_failing`.
@@ -60,7 +63,7 @@ The `tests/unit/test_charm.py` file SHALL cover pebble-ready, config-changed, th
 
 #### Scenario: Non-leader skips secret creation
 - **WHEN** the holistic handler runs on a non-leader unit
-- **THEN** `Secrets.__setitem__` is never called
+- **THEN** `Secrets.create()` is never called
 
 ### Requirement: test_charm.py covers collect-status parametrized
 The `tests/unit/test_charm.py` file SHALL use `@pytest.mark.parametrize` to test each `_on_collect_status` condition independently, overriding one condition at a time while `all_satisfied_conditions` keeps the rest satisfied.
@@ -100,19 +103,19 @@ The `tests/unit/test_configs.py` file SHALL test `CharmConfig.to_env_vars()` wit
 - **THEN** it returns an empty list
 
 ### Requirement: test_secret.py covers Secrets class
-The `tests/unit/test_secret.py` file SHALL test the `Secrets` class using `create_autospec(Model)`, covering `__getitem__`, `__setitem__`, `is_ready`, `to_env_vars`, and the three properties (`secret_key`, `bootstrap_token`, `bootstrap_password`) including the `SecretError` path when secrets are not available.
+The `tests/unit/test_secret.py` file SHALL test the `Secrets` class using `create_autospec(Model)`, covering consolidated secret creation and ID persistence, `is_ready`, `to_env_vars`, and the three properties (`secret_key`, `bootstrap_token`, `bootstrap_password`) including the `SecretError` path when secrets are unavailable.
 
-#### Scenario: Get secret by label
-- **WHEN** `Secrets[label]` is called and the secret exists
-- **THEN** it returns the secret content dict
+#### Scenario: Create and persist consolidated secret
+- **WHEN** `Secrets.create()` is called and no secret ID exists in peer data
+- **THEN** `model.app.add_secret()` is called with all three credentials and the returned secret ID is stored in the peer app databag
 
-#### Scenario: Get secret when not found
-- **WHEN** `Secrets[label]` is called and the secret does not exist
-- **THEN** it returns `None`
+#### Scenario: Secret creation is idempotent
+- **WHEN** `Secrets.create()` is called and peer data already contains a secret ID
+- **THEN** no new application secret is created
 
-#### Scenario: Set secret creates app secret
-- **WHEN** `Secrets[label] = content` is called
-- **THEN** `model.app.add_secret(content, label=label)` is called
+#### Scenario: Readiness handles missing secret
+- **WHEN** the peer secret ID is absent or Juju cannot find the referenced secret
+- **THEN** `Secrets.is_ready()` returns `False`
 
 #### Scenario: Property raises SecretError when not available
 - **WHEN** `Secrets.secret_key` is accessed and the secret does not exist
@@ -124,3 +127,4 @@ The `tests/unit/test_authentik_cluster.py` and `tests/unit/test_authentik_server
 #### Scenario: No broken test files remain
 - **WHEN** the test suite is collected
 - **THEN** `test_authentik_cluster.py`, `test_authentik_server_info.py`, and `test_tracing_integration.py` do not exist
+

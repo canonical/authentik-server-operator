@@ -1,6 +1,10 @@
 # authentik_cluster Library
 
-## ADDED Requirements
+## Purpose
+
+Defines the `authentik-cluster` library contract by which the Authentik Server charm shares cluster-formation data (such as the shared secret key and database configuration) with Authentik worker units, and the `LIBPATCH` revisioning discipline consumers rely on to detect updates.
+
+## Requirements
 
 ### Requirement: AuthentikClusterProvider must write secret key to relation databag
 

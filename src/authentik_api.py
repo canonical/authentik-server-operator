@@ -4,13 +4,31 @@
 """Authentik REST API Client."""
 
 import logging
+import time
 from typing import Iterator
 from urllib.parse import parse_qs, urlparse
 
 import requests
-from requests.exceptions import RequestException
+import tenacity
+from requests import Response
+from requests.exceptions import ConnectionError, RequestException, Timeout
+
+from exceptions import (
+    AuthentikAPIError,
+    AuthentikAuthenticationError,
+    AuthentikAuthorizationError,
+    AuthentikConflictError,
+    AuthentikNotFoundError,
+    AuthentikRequestValidationError,
+    AuthentikTransientError,
+)
 
 logger = logging.getLogger(__name__)
+
+REQUEST_TIMEOUT_SECONDS = 5
+REQUEST_MAX_ATTEMPTS = 3
+REQUEST_RETRY_BACKOFF_SECONDS = 0.25
+RETRYABLE_SERVER_STATUSES = frozenset({500, 502, 503, 504})
 
 
 class AuthentikAPI:
@@ -32,28 +50,72 @@ class AuthentikAPI:
         })
         self._scope_property_mappings: list[dict] | None = None
 
-    def _get_paginated(self, url: str, params: dict | None = None) -> Iterator[dict]:
-        """Fetch all results from a paginated API endpoint as a generator.
+    def _request(self, method: str, url: str, *, retry: bool = True, **kwargs) -> Response:
+        """Execute an HTTP request with bounded retries and raise a typed API error.
 
-        Args:
-            url: The API endpoint URL.
-            params: Optional query parameters.
-
-        Yields:
-            Each result dictionary as it is fetched.
+        Retries only transient failures (connection/timeout, HTTP 429, and 5xx).
+        Non-idempotent callers pass ``retry=False`` and recover ambiguous outcomes by
+        querying the resource's deterministic identity.
         """
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT_SECONDS)
+        attempts = REQUEST_MAX_ATTEMPTS if retry else 1
+        for attempt in tenacity.Retrying(
+            stop=tenacity.stop_after_attempt(attempts),
+            wait=tenacity.wait_exponential(multiplier=REQUEST_RETRY_BACKOFF_SECONDS),
+            retry=tenacity.retry_if_exception_type(AuthentikTransientError),
+            reraise=True,
+            sleep=time.sleep,
+        ):
+            with attempt:
+                return self._do_request(method, url, **kwargs)
+        raise AssertionError("request retry loop completed without a response")
+
+    def _do_request(self, method: str, url: str, **kwargs) -> Response:
+        """Execute one HTTP request, raising a typed error for the outcome.
+
+        Connection failures, timeouts, HTTP 429, and retryable 5xx responses raise the
+        retryable ``AuthentikTransientError``; other failures raise their terminal type.
+        """
+        try:
+            response = self.session.request(method, url, **kwargs)
+        except (ConnectionError, Timeout) as error:
+            raise AuthentikTransientError(f"{method} {url} failed: {error}") from error
+        except RequestException as error:
+            raise AuthentikRequestValidationError(
+                f"{method} {url} could not be sent: {error}"
+            ) from error
+
+        if response.status_code == 429 or response.status_code in RETRYABLE_SERVER_STATUSES:
+            raise AuthentikTransientError(f"{method} {url} returned HTTP {response.status_code}")
+        self._raise_for_terminal_status(response, method, url)
+        return response
+
+    @staticmethod
+    def _raise_for_terminal_status(response: Response, method: str, url: str) -> None:
+        """Raise the typed error matching a non-retryable HTTP status, if any."""
+        terminal = {
+            401: AuthentikAuthenticationError,
+            403: AuthentikAuthorizationError,
+            404: AuthentikNotFoundError,
+            409: AuthentikConflictError,
+        }
+        error_cls = terminal.get(response.status_code)
+        if error_cls is not None:
+            raise error_cls(f"{method} {url} returned HTTP {response.status_code}")
+        if response.status_code >= 400:
+            raise AuthentikRequestValidationError(
+                f"{method} {url} returned HTTP {response.status_code}: {response.text}"
+            )
+
+    def _get_paginated(self, url: str, params: dict | None = None) -> Iterator[dict]:
+        """Fetch all results from a paginated API endpoint."""
         current_params = (params or {}).copy()
         current_params.setdefault("page", 1)
 
         while True:
-            response = self.session.get(url, params=current_params, timeout=5)
-            response.raise_for_status()
-            data = response.json()
+            data = self._request("GET", url, params=current_params).json()
+            yield from data.get("results", [])
 
-            for item in data.get("results", []):
-                yield item
-
-            # Check for Authentik-specific pagination block
             pagination = data.get("pagination")
             if pagination:
                 next_page = pagination.get("next")
@@ -62,186 +124,142 @@ class AuthentikAPI:
                     continue
                 break
 
-            # Fallback to standard Django REST Framework pagination (top-level "next" URL)
             next_url = data.get("next")
             if isinstance(next_url, str):
-                parsed = urlparse(next_url)
-                page_val = parse_qs(parsed.query).get("page")
-                if page_val:
-                    current_params["page"] = int(page_val[0])
+                page_value = parse_qs(urlparse(next_url).query).get("page")
+                if page_value:
+                    current_params["page"] = int(page_value[0])
                     continue
             break
 
     def is_service_available(self) -> bool:
-        """Check if the Authentik API service is available and reachable.
+        """Return whether the service can answer an authenticated API request.
 
-        Returns:
-            True if the service is available, False otherwise.
+        Used as a readiness probe: during Authentik first-boot the API can reject
+        the bootstrap credentials with 401/403 (or 404/transient) before the token
+        is registered, so any typed API error means "not ready yet", not a crash.
         """
+        url = f"{self.base_url}/api/v3/flows/instances/"
         try:
-            url = f"{self.base_url}/api/v3/flows/instances/"
-            response = self.session.get(url, timeout=5)
-            return response.status_code == 200
-        except RequestException:
+            self._request("GET", url)
+        except AuthentikAPIError:
             return False
+        return True
 
-    def get_authorization_flow_uuid(self) -> str | None:
-        """Retrieve the explicit consent authorization flow UUID.
+    def _get_flow_uuid(self, slug: str) -> str:
+        url = f"{self.base_url}/api/v3/flows/instances/"
+        flows = list(self._get_paginated(url, params={"slug": slug}))
+        if not flows:
+            raise AuthentikNotFoundError(f"Authentik flow {slug!r} was not found")
+        return flows[0]["pk"]
 
-        Returns:
-            The flow UUID string if found, otherwise None.
-        """
-        try:
-            url = (
-                f"{self.base_url}/api/v3/flows/instances/?"
-                "slug=default-provider-authorization-explicit-consent"
-            )
-            response = self.session.get(url, timeout=5)
-            response.raise_for_status()
-            results = response.json().get("results", [])
-            if results:
-                return results[0]["pk"]
+    def get_authorization_flow_uuid(self) -> str:
+        """Retrieve the explicit-consent authorization flow UUID."""
+        return self._get_flow_uuid("default-provider-authorization-explicit-consent")
 
-            # Fallback to listing flows to find any authorization or consent flow
-            url = f"{self.base_url}/api/v3/flows/instances/"
-            first_flow = None
-            for flow in self._get_paginated(url, params={"ordering": "slug"}):
-                if first_flow is None:
-                    first_flow = flow
-                slug = flow.get("slug", "")
-                if "consent" in slug or "authorization" in slug:
-                    return flow["pk"]
-
-            if first_flow:
-                return first_flow["pk"]
-        except Exception as e:
-            logger.error("Failed to retrieve authorization flow: %s", e)
-        return None
-
-    def get_invalidation_flow_uuid(self) -> str | None:
-        """Retrieve the default provider invalidation flow UUID.
-
-        Returns:
-            The flow UUID string if found, otherwise None.
-        """
-        try:
-            url = (
-                f"{self.base_url}/api/v3/flows/instances/?slug=default-provider-invalidation-flow"
-            )
-            response = self.session.get(url, timeout=5)
-            response.raise_for_status()
-            results = response.json().get("results", [])
-            if results:
-                return results[0]["pk"]
-
-            # Fallback to listing flows to find any invalidation flow
-            url = f"{self.base_url}/api/v3/flows/instances/"
-            for flow in self._get_paginated(url, params={"ordering": "slug"}):
-                if "invalidation" in flow.get("slug", ""):
-                    return flow["pk"]
-        except Exception as e:
-            logger.error("Failed to retrieve invalidation flow: %s", e)
-        return None
+    def get_invalidation_flow_uuid(self) -> str:
+        """Retrieve the default provider invalidation flow UUID."""
+        return self._get_flow_uuid("default-provider-invalidation-flow")
 
     def get_property_mappings(self, scopes: list[str]) -> list[str]:
-        """Retrieve UUIDs of standard OIDC scope property mappings matching requested scopes.
+        """Resolve every requested OIDC scope by its explicit scope name.
 
-        Args:
-            scopes: List of requested scopes (e.g. ['openid', 'email']).
-
-        Returns:
-            List of matching property mapping UUID strings.
+        Raises:
+            AuthentikRequestValidationError: If a scope is unsupported or mappings are invalid.
         """
-        mappings = []
-        try:
-            if self._scope_property_mappings is None:
-                url = f"{self.base_url}/api/v3/propertymappings/provider/scope/"
-                self._scope_property_mappings = list(self._get_paginated(url))
+        if self._scope_property_mappings is None:
+            url = f"{self.base_url}/api/v3/propertymappings/provider/scope/"
+            self._scope_property_mappings = list(self._get_paginated(url))
 
-            requested_scopes = [s.lower() for s in scopes]
-            all_pks = []
-            for mapping in self._scope_property_mappings:
-                pk = mapping["pk"]
-                all_pks.append(pk)
-                name = mapping.get("name", "").lower()
-                managed = mapping.get("managed", "") or ""
-                managed = managed.lower()
+        mappings_by_scope: dict[str, str] = {}
+        for mapping in self._scope_property_mappings:
+            scope_name = mapping.get("scope_name")
+            pk = mapping.get("pk")
+            if isinstance(scope_name, str) and isinstance(pk, str):
+                mappings_by_scope[scope_name.lower()] = pk
 
-                matched = False
-                for scope in requested_scopes:
-                    if (
-                        f"scope-{scope}" in managed
-                        or f"scope {scope}" in name
-                        or f"scope_{scope}" in name
-                        or scope == name
-                    ):
-                        matched = True
-                        break
-
-                if matched or not scopes:
-                    mappings.append(pk)
-
-            # Fallback to all mappings if none specifically matched
-            if not mappings:
-                mappings = all_pks
-        except Exception as e:
-            logger.error("Failed to retrieve property mappings: %s", e)
-        return mappings
+        requested_scopes = [scope.lower() for scope in scopes]
+        missing_scopes = [scope for scope in requested_scopes if scope not in mappings_by_scope]
+        if missing_scopes:
+            raise AuthentikRequestValidationError(
+                f"Unsupported OIDC scope(s): {', '.join(sorted(set(missing_scopes)))}"
+            )
+        return [mappings_by_scope[scope] for scope in requested_scopes]
 
     def get_application(self, slug: str) -> dict | None:
-        """Get an application by slug.
-
-        Args:
-            slug: The application slug.
-
-        Returns:
-            The application details dictionary if found, otherwise None.
-        """
+        """Get an application by its exact slug."""
+        url = f"{self.base_url}/api/v3/core/applications/{slug}/"
         try:
-            url = f"{self.base_url}/api/v3/core/applications/{slug}/"
-            response = self.session.get(url, timeout=5)
-            if response.status_code == 404:
-                return None
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error("Failed to get application %s: %s", slug, e)
-        return None
+            return self._request("GET", url).json()
+        except AuthentikNotFoundError:
+            return None
 
     def list_applications(self) -> Iterator[dict]:
-        """List all applications.
-
-        Returns:
-            An iterator of application details dictionaries.
-        """
+        """List all applications."""
         url = f"{self.base_url}/api/v3/core/applications/"
         return self._get_paginated(url)
 
+    def get_oauth_provider(self, provider_pk: int) -> dict | None:
+        """Get an OAuth provider by primary key."""
+        url = f"{self.base_url}/api/v3/providers/oauth2/{provider_pk}/"
+        try:
+            return self._request("GET", url).json()
+        except AuthentikNotFoundError:
+            return None
+
+    def find_oauth_provider(self, name: str) -> dict | None:
+        """Find an OAuth provider by exact deterministic name."""
+        url = f"{self.base_url}/api/v3/providers/oauth2/"
+        providers = [
+            provider
+            for provider in self._get_paginated(url, params={"name": name})
+            if provider.get("name") == name
+        ]
+        if len(providers) > 1:
+            raise AuthentikConflictError(f"Multiple OAuth providers have the exact name {name!r}")
+        return providers[0] if providers else None
+
     def _format_redirect_uris(self, redirect_uris: str | list[str] | list[dict]) -> list[dict]:
-        """Format redirect URIs as required by the Authentik REST API.
-
-        Args:
-            redirect_uris: Redirection URIs in string or list format.
-
-        Returns:
-            A list of RedirectURIRequest dicts.
-        """
-        if isinstance(redirect_uris, list) and all(isinstance(x, dict) for x in redirect_uris):
+        """Format redirect URIs as required by the Authentik REST API."""
+        if isinstance(redirect_uris, list) and all(
+            isinstance(item, dict) for item in redirect_uris
+        ):
             return redirect_uris
-
-        processed_redirect_uris = []
         if isinstance(redirect_uris, str):
-            uris_list = [
-                u.strip() for f in redirect_uris.splitlines() for u in f.split(",") if u.strip()
+            uris = [
+                uri.strip()
+                for line in redirect_uris.splitlines()
+                for uri in line.split(",")
+                if uri.strip()
             ]
         elif isinstance(redirect_uris, list):
-            uris_list = [str(u).strip() for u in redirect_uris if str(u).strip()]
+            uris = [str(uri).strip() for uri in redirect_uris if str(uri).strip()]
         else:
-            uris_list = []
+            uris = []
+        return [{"matching_mode": "strict", "url": uri} for uri in uris]
 
-        for uri in uris_list:
-            processed_redirect_uris.append({"matching_mode": "strict", "url": uri})
-        return processed_redirect_uris
+    def _provider_payload(
+        self,
+        name: str,
+        client_id: str,
+        client_secret: str,
+        redirect_uris: str,
+        authorization_flow: str,
+        invalidation_flow: str,
+        property_mappings: list[str],
+        grant_types: list[str] | None,
+    ) -> dict:
+        return {
+            "name": name,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uris": self._format_redirect_uris(redirect_uris),
+            "authorization_flow": authorization_flow,
+            "invalidation_flow": invalidation_flow,
+            "property_mappings": property_mappings,
+            "grant_types": grant_types
+            or ["authorization_code", "refresh_token", "client_credentials"],
+        }
 
     def create_oauth_provider(
         self,
@@ -253,51 +271,32 @@ class AuthentikAPI:
         invalidation_flow: str,
         property_mappings: list[str],
         grant_types: list[str] | None = None,
-    ) -> int | None:
-        """Create an OAuth2 provider.
-
-        Args:
-            name: The provider name.
-            client_id: The OIDC client ID.
-            client_secret: The OIDC client secret.
-            redirect_uris: Newline separated redirect URIs.
-            authorization_flow: The flow UUID.
-            invalidation_flow: The flow UUID.
-            property_mappings: List of scope property mapping UUIDs.
-            grant_types: List of allowed OAuth2 grant types.
-
-        Returns:
-            The PK ID of the created provider if successful, otherwise None.
-        """
+    ) -> int:
+        """Create a provider, recovering an ambiguous result by exact name."""
+        url = f"{self.base_url}/api/v3/providers/oauth2/"
+        payload = self._provider_payload(
+            name,
+            client_id,
+            client_secret,
+            redirect_uris,
+            authorization_flow,
+            invalidation_flow,
+            property_mappings,
+            grant_types,
+        )
         try:
-            if grant_types is None:
-                grant_types = ["authorization_code", "refresh_token", "client_credentials"]
-
-            url = f"{self.base_url}/api/v3/providers/oauth2/"
-            payload = {
-                "name": name,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uris": self._format_redirect_uris(redirect_uris),
-                "authorization_flow": authorization_flow,
-                "invalidation_flow": invalidation_flow,
-                "property_mappings": property_mappings,
-                "grant_types": grant_types,
-            }
-            response = self.session.post(url, json=payload, timeout=5)
-            response.raise_for_status()
-            return response.json().get("pk")
-        except Exception as e:
-            if hasattr(e, "response") and getattr(e, "response") is not None:
-                logger.error(
-                    "Failed to create OAuth provider %s: %s, response: %s",
-                    name,
-                    e,
-                    getattr(e, "response").text,
-                )
-            else:
-                logger.error("Failed to create OAuth provider %s: %s", name, e)
-        return None
+            response = self._request("POST", url, retry=False, json=payload)
+        except (AuthentikTransientError, AuthentikConflictError):
+            provider = self.find_oauth_provider(name)
+            if provider is not None and provider.get("pk") is not None:
+                return int(provider["pk"])
+            raise
+        provider_pk = response.json().get("pk")
+        if provider_pk is None:
+            raise AuthentikRequestValidationError(
+                f"Create response for OAuth provider {name!r} did not contain a primary key"
+            )
+        return int(provider_pk)
 
     def update_oauth_provider(
         self,
@@ -311,137 +310,54 @@ class AuthentikAPI:
         property_mappings: list[str],
         grant_types: list[str] | None = None,
     ) -> bool:
-        """Update an existing OAuth2 provider.
-
-        Args:
-            provider_pk: The provider primary key ID.
-            name: The provider name.
-            client_id: The OIDC client ID.
-            client_secret: The OIDC client secret.
-            redirect_uris: Newline separated redirect URIs.
-            authorization_flow: The flow UUID.
-            invalidation_flow: The flow UUID.
-            property_mappings: List of scope property mapping UUIDs.
-            grant_types: List of allowed OAuth2 grant types.
-
-        Returns:
-            True if successful, False otherwise.
-        """
-        try:
-            if grant_types is None:
-                grant_types = ["authorization_code", "refresh_token", "client_credentials"]
-
-            url = f"{self.base_url}/api/v3/providers/oauth2/{provider_pk}/"
-            payload = {
-                "name": name,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uris": self._format_redirect_uris(redirect_uris),
-                "authorization_flow": authorization_flow,
-                "invalidation_flow": invalidation_flow,
-                "property_mappings": property_mappings,
-                "grant_types": grant_types,
-            }
-            response = self.session.put(url, json=payload, timeout=5)
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            if hasattr(e, "response") and getattr(e, "response") is not None:
-                logger.error(
-                    "Failed to update OAuth provider %s: %s, response: %s",
-                    provider_pk,
-                    e,
-                    getattr(e, "response").text,
-                )
-            else:
-                logger.error("Failed to update OAuth provider %s: %s", provider_pk, e)
-        return False
+        """Update an existing OAuth provider."""
+        url = f"{self.base_url}/api/v3/providers/oauth2/{provider_pk}/"
+        payload = self._provider_payload(
+            name,
+            client_id,
+            client_secret,
+            redirect_uris,
+            authorization_flow,
+            invalidation_flow,
+            property_mappings,
+            grant_types,
+        )
+        self._request("PUT", url, json=payload)
+        return True
 
     def create_application(self, name: str, slug: str, provider_pk: int) -> bool:
-        """Create an application linked to a provider.
-
-        Args:
-            name: The application name.
-            slug: The application slug.
-            provider_pk: The linked provider PK ID.
-
-        Returns:
-            True if successful, False otherwise.
-        """
+        """Create an application, recovering an ambiguous result by exact slug."""
+        url = f"{self.base_url}/api/v3/core/applications/"
+        payload = {"name": name, "slug": slug, "provider": provider_pk}
         try:
-            url = f"{self.base_url}/api/v3/core/applications/"
-            payload = {
-                "name": name,
-                "slug": slug,
-                "provider": provider_pk,
-            }
-            response = self.session.post(url, json=payload, timeout=5)
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            logger.error("Failed to create application %s: %s", name, e)
-        return False
+            self._request("POST", url, retry=False, json=payload)
+        except (AuthentikTransientError, AuthentikConflictError):
+            application = self.get_application(slug)
+            if application is not None and application.get("provider") == provider_pk:
+                return True
+            raise
+        return True
 
     def update_application(self, slug: str, name: str, provider_pk: int) -> bool:
-        """Update an existing application.
-
-        Args:
-            slug: The application slug.
-            name: The application name.
-            provider_pk: The linked provider PK ID.
-
-        Returns:
-            True if successful, False otherwise.
-        """
-        try:
-            url = f"{self.base_url}/api/v3/core/applications/{slug}/"
-            payload = {
-                "name": name,
-                "provider": provider_pk,
-            }
-            response = self.session.put(url, json=payload, timeout=5)
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            logger.error("Failed to update application %s: %s", slug, e)
-        return False
+        """Update an existing application."""
+        url = f"{self.base_url}/api/v3/core/applications/{slug}/"
+        self._request("PUT", url, json={"name": name, "provider": provider_pk})
+        return True
 
     def delete_application(self, slug: str) -> bool:
-        """Delete an application by slug.
-
-        Args:
-            slug: The application slug.
-
-        Returns:
-            True if successful or if application did not exist, False otherwise.
-        """
+        """Delete an application, treating absence as success."""
+        url = f"{self.base_url}/api/v3/core/applications/{slug}/"
         try:
-            url = f"{self.base_url}/api/v3/core/applications/{slug}/"
-            response = self.session.delete(url, timeout=5)
-            if response.status_code == 404:
-                return True
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            logger.error("Failed to delete application %s: %s", slug, e)
-        return False
+            self._request("DELETE", url)
+        except AuthentikNotFoundError:
+            pass
+        return True
 
     def delete_oauth_provider(self, provider_pk: int) -> bool:
-        """Delete an OAuth2 provider.
-
-        Args:
-            provider_pk: The provider primary key ID.
-
-        Returns:
-            True if successful or if provider did not exist, False otherwise.
-        """
+        """Delete an OAuth provider, treating absence as success."""
+        url = f"{self.base_url}/api/v3/providers/oauth2/{provider_pk}/"
         try:
-            url = f"{self.base_url}/api/v3/providers/oauth2/{provider_pk}/"
-            response = self.session.delete(url, timeout=5)
-            if response.status_code == 404:
-                return True
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            logger.error("Failed to delete OAuth provider %s: %s", provider_pk, e)
-        return False
+            self._request("DELETE", url)
+        except AuthentikNotFoundError:
+            pass
+        return True

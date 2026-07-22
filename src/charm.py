@@ -55,6 +55,8 @@ from constants import (
     WORKLOAD_SERVICE,
 )
 from exceptions import (
+    AuthentikAPIError,
+    AuthentikTransientError,
     CharmError,
     DatabaseConnectionError,
     MigrationFailedError,
@@ -266,7 +268,10 @@ class AuthentikServerCharm(ops.CharmBase):
         ]:
             try:
                 can_plan = can_plan and f(event)
-            except CharmError:
+            except AuthentikTransientError:
+                # Transient Authentik failures propagate so Juju retries the hook.
+                raise
+            except (CharmError, AuthentikAPIError):
                 logger.exception("Error in %s", f.__name__)
                 can_plan = False
 
@@ -343,17 +348,23 @@ class AuthentikServerCharm(ops.CharmBase):
         return True
 
     def _ensure_server_info_relation(self, event: ops.EventBase | None = None) -> bool:
-        """Ensure the server-info relation has up-to-date data."""
-        if (
+        """Publish the Authentik host and API token to the server-info relation.
+
+        The API token is currently the bootstrap admin token, shared under the
+        canonical ``api-token`` key. Provisioning a dedicated least-privilege
+        automation token is deferred to a later change.
+        """
+        if not (
             self.unit.is_leader()
             and self._secrets.is_ready()
             and self.model.relations[SERVER_INFO_RELATION]
         ):
-            self.server_info_provider.update_relations_app_data(
-                authentik_host=self._internal_url,
-                bootstrap_token=self._secrets.bootstrap_token,
-                bootstrap_password=self._secrets.bootstrap_password,
-            )
+            return True
+
+        self.server_info_provider.update_relations_app_data(
+            authentik_host=self._internal_url,
+            api_token=self._secrets.bootstrap_token,
+        )
         return True
 
     def _ensure_tls(self, event: ops.EventBase | None = None) -> bool:
@@ -415,9 +426,13 @@ class AuthentikServerCharm(ops.CharmBase):
         if not self.unit.is_leader():
             return True
 
+        if not self._workload_service.is_running():
+            logger.info("Authentik workload is not ready for OAuth reconciliation")
+            return True
+
         api = AuthentikAPI(self._secrets.bootstrap_token)
         if not api.is_service_available():
-            logger.info("Authentik API service is not available yet")
+            logger.info("Authentik API is not available yet for OAuth reconciliation")
             return True
 
         relations = self.model.relations[OAUTH_RELATION_NAME]

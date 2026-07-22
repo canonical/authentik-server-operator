@@ -34,8 +34,7 @@ class AuthentikServerCharm(CharmBase):
     def _on_server_info_ready(self, event):
         self.server_info_provider.update_relations_app_data(
             authentik_host="http://authentik-server:9000",
-            bootstrap_token=token_value,
-            bootstrap_password=password_value,
+            api_token=api_token_value,
         )
 ```
 
@@ -79,7 +78,7 @@ from pydantic import BaseModel, ValidationError
 
 LIBID = "786e915b50384bbdaf17fa871eb6202f"
 LIBAPI = 0
-LIBPATCH = 3
+LIBPATCH = 4
 
 PYDEPS = ["pydantic"]
 
@@ -94,7 +93,6 @@ class ProviderData(BaseModel):
 
     authentik_host: str
     authentik_token_secret_id: str
-    bootstrap_password_secret_id: str
 
 class AuthentikServerInfoReadyEvent(RelationEvent):
     """Event emitted when the provider populates the relation with info."""
@@ -155,72 +153,62 @@ class AuthentikServerInfoProvider(Object):
         relations = self._charm.model.relations.get(self._relation_name, [])
         remaining_relations = [rel for rel in relations if rel.id != event.relation.id]
         if remaining_relations:
-            for label in ("authentik-bootstrap-token", "authentik-bootstrap-password"):
-                try:
-                    secret = self._charm.model.get_secret(label=label)
-                    secret.revoke(event.relation)
-                except SecretNotFoundError:
-                    pass
+            try:
+                secret = self._charm.model.get_secret(label="authentik-api-token")
+                secret.revoke(event.relation)
+            except SecretNotFoundError:
+                pass
         else:
             self._delete_secrets()
 
-    def _create_or_update_secret(self, label: str, key: str, value: str) -> Secret:
-        """Create or update a single app-owned Juju secret, returning it."""
-        content = {key: value}
+
+    def _delete_secrets(self) -> None:
+        """Remove all revisions of the API-token secret, if it exists."""
+        if not self._charm.unit.is_leader():
+            return
+        try:
+            secret = self._charm.model.get_secret(label="authentik-api-token")
+        except SecretNotFoundError:
+            return
+        secret.remove_all_revisions()
+
+    def _create_or_update_token_secret(self, label: str, api_token: str) -> Secret:
+        """Create or update the app-owned API-token secret."""
+        content = {"api-token": api_token}
         try:
             secret = self._charm.model.get_secret(label=label)
-            if secret.get_content().get(key) != value:
+            if secret.get_content() != content:
                 secret.set_content(content)
         except SecretNotFoundError:
             secret = self._charm.app.add_secret(content, label=label)
         return secret
 
-    def _delete_secrets(self) -> None:
-        """Remove all revisions of the bootstrap secrets, if they exist."""
-        if not self._charm.unit.is_leader():
-            return
-        for label in ("authentik-bootstrap-token", "authentik-bootstrap-password"):
-            try:
-                secret = self._charm.model.get_secret(label=label)
-            except SecretNotFoundError:
-                continue
-            secret.remove_all_revisions()
-
     def update_relations_app_data(
         self,
         authentik_host: str,
-        bootstrap_token: str,
-        bootstrap_password: str,
+        api_token: str,
     ) -> None:
-        """Store connection info in Juju secrets and publish ProviderData to all relations.
+        """Store the API token in a Juju secret and publish ProviderData to all relations.
 
-        - Creates two app-owned secrets (token, password) on first call
-        - Grants both secrets to each related LDAP app
-        - Writes ProviderData (host + secret IDs) to each relation databag
+        - Creates an app-owned API-token secret on first call
+        - Grants it to each related LDAP app
+        - Writes ProviderData (host + token secret ID) to each relation databag
         - Idempotent: safe to call multiple times
 
         Args:
             authentik_host: The Authentik server URL (e.g. "http://authentik-server:9000").
-            bootstrap_token: The bootstrap API token value.
-            bootstrap_password: The bootstrap admin password value.
+            api_token: The dedicated LDAP automation API token value.
         """
         if not self._charm.unit.is_leader():
             return
 
-        token_secret = self._create_or_update_secret(
-            "authentik-bootstrap-token", "bootstrap-token", bootstrap_token
-        )
-        password_secret = self._create_or_update_secret(
-            "authentik-bootstrap-password", "bootstrap-password", bootstrap_password
-        )
+        token_secret = self._create_or_update_token_secret("authentik-api-token", api_token)
         data = ProviderData(
             authentik_host=authentik_host,
             authentik_token_secret_id=token_secret.id or token_secret.get_info().id,
-            bootstrap_password_secret_id=password_secret.id or password_secret.get_info().id,
         )
         for relation in self._charm.model.relations.get(self._relation_name, []):
             token_secret.grant(relation)
-            password_secret.grant(relation)
             relation.data[self._charm.app].update(data.model_dump())
 
     def is_ready(self) -> bool:
@@ -233,7 +221,6 @@ class AuthentikServerInfoProvider(Object):
             if not (
                 data.get("authentik_host")
                 and data.get("authentik_token_secret_id")
-                and data.get("bootstrap_password_secret_id")
             ):
                 return False
         return True
@@ -282,7 +269,6 @@ class AuthentikServerInfoRequirer(Object):
         if not (
             raw.get("authentik_host")
             and raw.get("authentik_token_secret_id")
-            and raw.get("bootstrap_password_secret_id")
         ):
             return None
         try:
@@ -308,21 +294,17 @@ class AuthentikServerInfoRequirer(Object):
             return None
 
     def get_authentik_token(self) -> Optional[str]:
-        """Retrieve the bootstrap token from the granted Juju secret."""
+        """Retrieve the automation API token from the granted Juju secret.
+
+        Prefers the canonical ``api-token`` key and falls back to the legacy
+        ``bootstrap-token`` key, so the outpost tolerates a not-yet-upgraded
+        provider during a rolling upgrade.
+        """
         data = self.get_provider_data()
         if not data:
             return None
         secret = self._get_secret(data.authentik_token_secret_id)
         if not secret:
             return None
-        return secret.get_content().get("bootstrap-token")
-
-    def get_bootstrap_password(self) -> Optional[str]:
-        """Retrieve the bootstrap password from the granted Juju secret."""
-        data = self.get_provider_data()
-        if not data:
-            return None
-        secret = self._get_secret(data.bootstrap_password_secret_id)
-        if not secret:
-            return None
-        return secret.get_content().get("bootstrap-password")
+        content = secret.get_content()
+        return content.get("api-token") or content.get("bootstrap-token")

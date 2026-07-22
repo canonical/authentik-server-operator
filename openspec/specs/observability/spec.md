@@ -1,6 +1,10 @@
 # Observability Stack
 
-## ADDED Requirements
+## Purpose
+
+Defines the Authentik Server charm's observability integrations — Loki log forwarding, Prometheus metrics scraping, Grafana dashboards, and tracing — so operators receive logs, metrics, dashboards, and traces for the workload out of the box.
+
+## Requirements
 
 ### Requirement: Charm must integrate with Loki via LogForwarder
 

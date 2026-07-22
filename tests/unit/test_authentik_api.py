@@ -1,0 +1,147 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+"""Unit tests for the Authentik API client."""
+
+from unittest.mock import MagicMock
+
+import pytest
+from pytest_mock import MockerFixture
+from requests import Response
+from requests.exceptions import ConnectionError
+
+from authentik_api import AuthentikAPI
+from exceptions import (
+    AuthentikAuthenticationError,
+    AuthentikAuthorizationError,
+    AuthentikConflictError,
+    AuthentikNotFoundError,
+    AuthentikRequestValidationError,
+    AuthentikTransientError,
+)
+
+
+def response(status: int, payload: str = "{}") -> Response:
+    """Build a requests response for client tests."""
+    result = Response()
+    result.status_code = status
+    result._content = payload.encode()
+    result.url = "http://authentik.test/api"
+    return result
+
+
+@pytest.mark.parametrize(
+    "status,error",
+    [
+        (400, AuthentikRequestValidationError),
+        (401, AuthentikAuthenticationError),
+        (403, AuthentikAuthorizationError),
+        (404, AuthentikNotFoundError),
+        (409, AuthentikConflictError),
+    ],
+)
+def test_request_classifies_permanent_failures_without_retry(status: int, error: type) -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(status))
+
+    with pytest.raises(error):
+        api._request("GET", "http://authentik.test/resource")
+
+    api.session.request.assert_called_once()
+
+
+def test_request_retries_connection_failures_with_bounded_backoff(mocker: MockerFixture) -> None:
+    sleep = mocker.patch("authentik_api.time.sleep")
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(
+        side_effect=[ConnectionError("down"), ConnectionError("down"), response(200)]
+    )
+
+    assert api._request("GET", "http://authentik.test/resource").status_code == 200
+    assert api.session.request.call_count == 3
+    assert [call.args[0] for call in sleep.call_args_list] == [0.25, 0.5]
+
+
+def test_request_raises_transient_error_after_retry_budget(mocker: MockerFixture) -> None:
+    mocker.patch("authentik_api.time.sleep")
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(503))
+
+    with pytest.raises(AuthentikTransientError):
+        api._request("DELETE", "http://authentik.test/resource")
+
+    assert api.session.request.call_count == 3
+
+
+def test_ambiguous_provider_create_recovers_by_exact_name_without_second_post() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(
+        side_effect=[
+            response(503),
+            response(200, '{"results": [{"pk": 42, "name": "managed-provider"}]}'),
+        ]
+    )
+
+    provider_pk = api.create_oauth_provider(
+        name="managed-provider",
+        client_id="client",
+        client_secret="secret",
+        redirect_uris="https://example.test/callback",
+        authorization_flow="authorization",
+        invalidation_flow="invalidation",
+        property_mappings=["openid-pk"],
+    )
+
+    assert provider_pk == 42
+    assert [call.args[0] for call in api.session.request.call_args_list] == ["POST", "GET"]
+    assert api.session.request.call_args_list[1].kwargs["params"]["name"] == "managed-provider"
+
+
+def test_ambiguous_application_create_recovers_by_slug_without_second_post() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(
+        side_effect=[
+            response(503),
+            response(200, '{"slug": "managed-app", "provider": 42}'),
+        ]
+    )
+
+    assert api.create_application("Managed app", "managed-app", 42)
+    assert [call.args[0] for call in api.session.request.call_args_list] == ["POST", "GET"]
+
+
+def test_property_mappings_use_exact_explicit_scope_names() -> None:
+    api = AuthentikAPI("token")
+    api._scope_property_mappings = [
+        {"pk": "openid-pk", "scope_name": "openid", "name": "OpenID Scope"},
+        {"pk": "email-pk", "scope_name": "email", "name": "Email Scope"},
+        {"pk": "admin-pk", "scope_name": "admin", "name": "scope email admin"},
+    ]
+
+    assert api.get_property_mappings(["email", "openid"]) == ["email-pk", "openid-pk"]
+
+
+def test_property_mappings_reject_unsupported_scope_without_fallback() -> None:
+    api = AuthentikAPI("token")
+    api._scope_property_mappings = [
+        {"pk": "openid-pk", "scope_name": "openid"},
+        {"pk": "email-pk", "scope_name": "email"},
+    ]
+
+    with pytest.raises(AuthentikRequestValidationError, match="groups"):
+        api.get_property_mappings(["openid", "groups"])
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 500, 503])
+def test_is_service_available_false_on_any_api_error(status: int) -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(status))
+
+    assert api.is_service_available() is False
+
+
+def test_is_service_available_true_when_reachable() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(200, '{"results": []}'))
+
+    assert api.is_service_available() is True

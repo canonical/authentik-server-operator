@@ -9,6 +9,7 @@ import pytest
 from ops import StatusBase, pebble, testing
 from ops.testing import ActionFailed
 from pytest_mock import MockerFixture
+from scenario.errors import UncaughtCharmError
 from unit.conftest import create_state
 
 from constants import (
@@ -17,7 +18,13 @@ from constants import (
     WORKLOAD_CONTAINER,
     WORKLOAD_SERVICE,
 )
-from exceptions import SecretError, ServiceBackoffError, WorkloadNotRunningError
+from exceptions import (
+    AuthentikRequestValidationError,
+    AuthentikTransientError,
+    SecretError,
+    ServiceBackoffError,
+    WorkloadNotRunningError,
+)
 
 _BASE_PLAN_WITH_CHECK: dict = {
     "checks": {
@@ -138,6 +145,89 @@ class TestHolisticHandler:
 
         # Should not raise — CharmError is caught and can_plan set to False
         context.run(context.on.config_changed(), state)
+
+    def test_authentik_api_error_is_caught(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        mocker.patch(
+            "charm.AuthentikServerCharm._ensure_oauth_relation",
+            side_effect=AuthentikRequestValidationError("bad scope"),
+        )
+        state = create_state(
+            relations=[db_relation, peer_relation, cluster_relation],
+            secrets=[authentik_secrets],
+        )
+
+        # Should not raise — typed Authentik API errors are caught like CharmError.
+        context.run(context.on.config_changed(), state)
+
+    def test_oauth_api_is_not_constructed_before_workload_is_ready(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+        mocked_workload_is_running: MagicMock,
+        mocker: MockerFixture,
+    ) -> None:
+        oauth_relation = testing.Relation("oauth", remote_app_name="client")
+        mocked_workload_is_running.return_value = False
+        api_class = mocker.patch("charm.AuthentikAPI")
+        state = create_state(
+            relations=[
+                db_relation,
+                peer_relation,
+                cluster_relation,
+                oauth_relation,
+                traefik_route_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        context.run(context.on.config_changed(), state)
+
+        api_class.assert_not_called()
+
+    def test_exhausted_oauth_api_failure_propagates_from_hook(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        oauth_relation = testing.Relation("oauth", remote_app_name="client")
+        api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
+        api.is_service_available.return_value = True
+        api.get_authorization_flow_uuid.side_effect = AuthentikTransientError(
+            "retry budget exhausted"
+        )
+        state = create_state(
+            relations=[
+                db_relation,
+                peer_relation,
+                cluster_relation,
+                oauth_relation,
+                traefik_route_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        with pytest.raises(UncaughtCharmError, match="retry budget exhausted"):
+            context.run(context.on.config_changed(), state)
 
 
 class TestCollectStatusEvent:
@@ -393,7 +483,10 @@ class TestTraefikRouteEvents:
         traefik_route_relation: testing.Relation,
         server_info_relation: testing.Relation,
         all_satisfied_conditions: None,
+        mocker: MockerFixture,
     ) -> None:
+        api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
+        api.is_service_available.return_value = True
         state = create_state(
             relations=[
                 db_relation,

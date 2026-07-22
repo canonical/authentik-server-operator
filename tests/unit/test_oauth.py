@@ -13,6 +13,8 @@ from pytest_mock import MockerFixture
 from unit.conftest import create_state
 
 from constants import OAUTH_RELATION_NAME
+from exceptions import AuthentikConflictError, AuthentikTransientError
+from oauth import OauthReconciler
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +29,8 @@ def mock_authentik_api(mocker: MockerFixture):
     mock_api_instance.get_invalidation_flow_uuid.return_value = "test-invalidation-flow-uuid"
     mock_api_instance.get_property_mappings.return_value = ["mapping-1", "mapping-2"]
     mock_api_instance.get_application.return_value = None  # Default to not existing yet
+    mock_api_instance.get_oauth_provider.return_value = {"pk": 123}
+    mock_api_instance.find_oauth_provider.return_value = None
     mock_api_instance.create_oauth_provider.return_value = 123
     mock_api_instance.create_application.return_value = True
     mock_api_instance.list_applications.return_value = []
@@ -109,10 +113,10 @@ def test_oauth_client_created_leader(
     assert "authorization_endpoint" in rel_out.local_app_data
     assert "token_endpoint" in rel_out.local_app_data
     assert "jwks_endpoint" in rel_out.local_app_data
-    assert (
-        rel_out.local_app_data["issuer_url"]
-        == f"https://authentik.example.com/application/o/client-app-{oauth_relation.id}/"
+    assert rel_out.local_app_data["issuer_url"].startswith(
+        "https://authentik.example.com/application/o/juju-"
     )
+    assert rel_out.local_app_data["issuer_url"].endswith(f"-oauth-{oauth_relation.id}/")
 
 
 def test_oauth_client_created_non_leader(
@@ -211,10 +215,10 @@ def test_oauth_endpoints_update_on_ingress_change(
     state_out = context.run(context.on.config_changed(), state)
 
     rel_out = state_out.get_relation(oauth_relation.id)
-    assert (
-        rel_out.local_app_data["issuer_url"]
-        == f"https://authentik.mycompany.org/application/o/client-app-{oauth_relation.id}/"
+    assert rel_out.local_app_data["issuer_url"].startswith(
+        "https://authentik.mycompany.org/application/o/juju-"
     )
+    assert rel_out.local_app_data["issuer_url"].endswith(f"-oauth-{oauth_relation.id}/")
     assert (
         rel_out.local_app_data["authorization_endpoint"]
         == "https://authentik.mycompany.org/application/o/authorize/"
@@ -223,10 +227,10 @@ def test_oauth_endpoints_update_on_ingress_change(
         rel_out.local_app_data["token_endpoint"]
         == "https://authentik.mycompany.org/application/o/token/"
     )
-    assert (
-        rel_out.local_app_data["jwks_endpoint"]
-        == f"https://authentik.mycompany.org/application/o/client-app-{oauth_relation.id}/jwks/"
+    assert rel_out.local_app_data["jwks_endpoint"].startswith(
+        "https://authentik.mycompany.org/application/o/juju-"
     )
+    assert rel_out.local_app_data["jwks_endpoint"].endswith(f"-oauth-{oauth_relation.id}/jwks/")
 
 
 def test_oauth_relation_broken(
@@ -239,7 +243,7 @@ def test_oauth_relation_broken(
     all_satisfied_conditions: None,
     mock_authentik_api: MagicMock,
 ) -> None:
-    """Test that relation_broken triggers garbage collection of Authentik objects."""
+    """Test that an uncached numeric legacy slug is never treated as owned."""
     oauth_relation = testing.Relation(
         endpoint=OAUTH_RELATION_NAME,
         interface="oauth",
@@ -261,7 +265,6 @@ def test_oauth_relation_broken(
         secrets=[authentik_secrets],
     )
 
-    # Mock list_applications to return an application matching our slug format with provider info
     mock_authentik_api.list_applications.return_value = [
         {
             "name": f"client-app (Relation {oauth_relation.id})",
@@ -270,14 +273,11 @@ def test_oauth_relation_broken(
         }
     ]
 
-    # Trigger relation_broken
     context.run(context.on.relation_broken(oauth_relation), state)
 
-    # Verify that the API delete methods were called for the broken relation slug and provider ID
-    mock_authentik_api.delete_oauth_provider.assert_called_once_with(123)
-    mock_authentik_api.delete_application.assert_called_once_with(
-        f"client-app-{oauth_relation.id}"
-    )
+    mock_authentik_api.list_applications.assert_not_called()
+    mock_authentik_api.delete_oauth_provider.assert_not_called()
+    mock_authentik_api.delete_application.assert_not_called()
 
 
 def test_oauth_leader_election_heals_unprovisioned_relation(
@@ -448,6 +448,7 @@ def test_oauth_relation_reconcile_uses_cache(
             "secrets_id": authentik_secrets.id,
             "oauth_sync_cache": json.dumps({
                 str(oauth_relation.id): {
+                    "schema_version": 2,
                     "config_hash": config_hash,
                     "provider_pk": 123,
                     "slug": f"client-app-{oauth_relation.id}",
@@ -472,7 +473,7 @@ def test_oauth_relation_reconcile_uses_cache(
 
     mocker.patch(
         "charm.AuthentikServerCharm._get_or_generate_credentials",
-        return_value=("test-client-id", "test-secret"),
+        return_value=("test-client-id", "test-secret", False),
     )
 
     # Trigger reconcile via relation_changed event
@@ -545,3 +546,198 @@ def test_oauth_relation_broken_uses_cache(
     mock_authentik_api.delete_application.assert_called_once_with(
         f"client-app-{oauth_relation.id}"
     )
+
+
+class FakePeerData:
+    """In-memory peer data with copy-on-read/write semantics."""
+
+    def __init__(self, cache: dict | None = None) -> None:
+        self.data = {"oauth_sync_cache": cache or {}}
+
+    def __getitem__(self, key: str) -> dict:
+        return json.loads(json.dumps(self.data.get(key, {})))
+
+    def __setitem__(self, key: str, value: dict) -> None:
+        self.data[key] = json.loads(json.dumps(value))
+
+    def get_string(self, key: str) -> str | None:
+        return self.data.get(key)
+
+    def set_string(self, key: str, value: str) -> None:
+        self.data[key] = value
+
+
+def make_reconciler(mocker: MockerFixture, api: MagicMock, peer: FakePeerData) -> OauthReconciler:
+    charm = MagicMock()
+    charm.model.uuid = "12345678-1234-5678-1234-567812345678"
+    charm._clean_slug.side_effect = lambda value: value.lower().replace(" ", "-")
+    mocker.patch("oauth.PeerData", return_value=peer)
+    return OauthReconciler(charm, api)
+
+
+def relation(relation_id: int = 7) -> MagicMock:
+    """Build the relation identity required by private reconciliation helpers."""
+    result = MagicMock()
+    result.id = relation_id
+    result.app.name = "Client App"
+    return result
+
+
+def sync_objects(
+    reconciler: OauthReconciler, oauth_relation: MagicMock, cache: dict
+) -> tuple[str, int]:
+    """Invoke object synchronization with stable test configuration."""
+    return reconciler._sync_authentik_objects(
+        oauth_relation,
+        cache,
+        "client-id",
+        "client-secret",
+        "https://client.test/callback",
+        "authorization-flow",
+        "invalidation-flow",
+        ["openid-mapping"],
+    )
+
+
+def test_active_relation_adopts_only_its_exact_legacy_application(
+    mocker: MockerFixture,
+) -> None:
+    api = MagicMock()
+    api.get_application.side_effect = [None, {"slug": "client-app-7", "provider": 123}]
+    api.get_oauth_provider.return_value = {
+        "pk": 123,
+        "name": "Client App (Relation 7)",
+    }
+    peer = FakePeerData()
+    reconciler = make_reconciler(mocker, api, peer)
+
+    slug, provider_pk = sync_objects(reconciler, relation(), {})
+
+    assert (slug, provider_pk) == ("client-app-7", 123)
+    assert [call.args[0] for call in api.get_application.call_args_list] == [
+        reconciler._managed_identifier(7),
+        "client-app-7",
+    ]
+    api.create_oauth_provider.assert_not_called()
+    assert peer.data["oauth_sync_cache"]["7"]["slug"] == "client-app-7"
+
+
+def test_active_relation_rejects_legacy_application_with_unexpected_provider(
+    mocker: MockerFixture,
+) -> None:
+    api = MagicMock()
+    api.get_application.side_effect = [None, {"slug": "client-app-7", "provider": 999}]
+    api.get_oauth_provider.return_value = {"pk": 999, "name": "Unrelated provider"}
+    peer = FakePeerData()
+    reconciler = make_reconciler(mocker, api, peer)
+
+    with pytest.raises(AuthentikConflictError, match="expected OAuth provider"):
+        sync_objects(reconciler, relation(), {})
+
+    assert peer.data["oauth_sync_cache"] == {}
+    api.update_oauth_provider.assert_not_called()
+
+
+def test_provider_creation_is_persisted_before_later_update_failure(
+    mocker: MockerFixture,
+) -> None:
+    api = MagicMock()
+    api.get_application.side_effect = [None, None]
+    api.find_oauth_provider.return_value = None
+    api.create_oauth_provider.return_value = 123
+    api.update_oauth_provider.side_effect = AuthentikTransientError("update failed")
+    peer = FakePeerData()
+    reconciler = make_reconciler(mocker, api, peer)
+
+    with pytest.raises(AuthentikTransientError, match="update failed"):
+        sync_objects(reconciler, relation(), {})
+
+    partial = peer.data["oauth_sync_cache"]["7"]
+    assert partial["provider_pk"] == 123
+    assert partial["slug"] == reconciler._managed_identifier(7)
+    assert "config_hash" not in partial
+    api.create_application.assert_not_called()
+
+
+def test_application_update_failure_leaves_unsynchronized_partial_cache(
+    mocker: MockerFixture,
+) -> None:
+    api = MagicMock()
+    oauth_relation = relation()
+    peer = FakePeerData()
+    reconciler = make_reconciler(mocker, api, peer)
+    api.get_application.return_value = {"provider": 123}
+    api.get_oauth_provider.return_value = {
+        "pk": 123,
+        "name": reconciler._provider_name(oauth_relation),
+    }
+    api.update_application.side_effect = AuthentikTransientError("application update failed")
+
+    with pytest.raises(AuthentikTransientError, match="application update failed"):
+        sync_objects(reconciler, oauth_relation, {})
+
+    partial = peer.data["oauth_sync_cache"]["7"]
+    assert partial["provider_pk"] == 123
+    assert "config_hash" not in partial
+
+
+def test_cleanup_retains_remaining_provider_after_transient_failure(
+    mocker: MockerFixture,
+) -> None:
+    peer = FakePeerData({"7": {"schema_version": 2, "slug": "owned-app", "provider_pk": 123}})
+    api = MagicMock()
+    api.delete_application.return_value = True
+    api.delete_oauth_provider.side_effect = AuthentikTransientError("provider unavailable")
+    reconciler = make_reconciler(mocker, api, peer)
+
+    with pytest.raises(AuthentikTransientError, match="provider unavailable"):
+        reconciler.garbage_collect(set())
+
+    assert peer.data["oauth_sync_cache"] == {"7": {"schema_version": 2, "provider_pk": 123}}
+
+    api.delete_oauth_provider.side_effect = None
+    api.delete_oauth_provider.return_value = True
+    reconciler.garbage_collect(set())
+    assert peer.data["oauth_sync_cache"] == {}
+
+
+def test_oauth_default_scope_excludes_phone(
+    context: testing.Context,
+    db_relation: testing.Relation,
+    peer_relation: testing.PeerRelation,
+    cluster_relation: testing.Relation,
+    authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
+    all_satisfied_conditions: None,
+    mock_authentik_api: MagicMock,
+) -> None:
+    """A requirer with an empty `scope` gets only default scopes with Authentik mappings (no `phone`)."""
+    oauth_relation = testing.Relation(
+        endpoint=OAUTH_RELATION_NAME,
+        interface="oauth",
+        remote_app_name="client-app",
+        remote_app_data={
+            "redirect_uri": "https://client.example.com/oauth/callback",
+            "scope": "",
+            "grant_types": json.dumps(["authorization_code"]),
+            "token_endpoint_auth_method": "client_secret_basic",
+            "audience": json.dumps([]),
+        },
+    )
+    state = create_state(
+        leader=True,
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
+        secrets=[authentik_secrets],
+    )
+
+    state_out = context.run(context.on.relation_changed(oauth_relation), state)
+
+    mock_authentik_api.get_property_mappings.assert_called_with(["email", "openid", "profile"])
+    rel_out = state_out.get_relation(oauth_relation.id)
+    assert "phone" not in rel_out.local_app_data["scope"]

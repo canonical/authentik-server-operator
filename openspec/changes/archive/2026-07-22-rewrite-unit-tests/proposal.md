@@ -8,7 +8,7 @@ The unit test suite is stale and broken. Two test files (`test_authentik_cluster
 - **Rewrite `tests/unit/test_charm.py`**: Cover pebble-ready, config-changed, holistic handler (container not connected, all satisfied, non-leader, CharmError), collect-status (parametrized per condition), database events, ingress events, pebble-check events, and database-relation-broken.
 - **Create `tests/unit/test_integrations.py`**: Consolidate `DatabaseConfig` and `TracingData` tests using `create_autospec()` on library requirers (matching tenant-service pattern).
 - **Create `tests/unit/test_configs.py`**: Test `CharmConfig.to_env_vars()` (full config, defaults) and `get_missing_config_keys()`.
-- **Create `tests/unit/test_secret.py`**: Test `Secrets` class using `create_autospec(Model)` — `__getitem__`, `__setitem__`, `is_ready`, `to_env_vars`, and the three properties (including `SecretError` when not available).
+- **Create `tests/unit/test_secret.py`**: Test `Secrets` with `create_autospec(Model)` — consolidated secret creation and ID persistence, readiness, environment conversion, and all three credential properties (including `SecretError` when unavailable).
 - **Delete `tests/unit/test_tracing_integration.py`**: Merged into `test_integrations.py`.
 - **Delete `tests/unit/test_authentik_cluster.py` and `tests/unit/test_authentik_server_info.py`**: Library tests belong with the library, not the charm. They are broken and test private internals.
 
