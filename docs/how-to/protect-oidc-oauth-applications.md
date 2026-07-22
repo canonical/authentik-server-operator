@@ -5,6 +5,15 @@ This guide describes how to integrate downstream web applications (specifically 
 
 ---
 
+## Prerequisites
+
+This guide assumes you have an active Charmed Authentik deployment matching the topology established in the [Getting Started Tutorial](../tutorials/getting-started.md). Specifically, you should have:
+* An active `authentik-server` deployment integrated with its database and certificates.
+* An active Traefik Ingress controller (`traefik-public`) deployed (typically in a shared administrative model, e.g., `core`).
+* Administrative access (`akadmin`) to the Authentik dashboard.
+
+---
+
 ## Technical Mechanism: The `oauth` Relation
 
 In Juju, application integration is entirely automated via relation interfaces. The `authentik-server` charm provides the `oauth` relation. 
@@ -21,10 +30,19 @@ When a consuming application charm (such as `grafana-k8s`) integrates with Authe
 
 We will demonstrate how to configure secure SSO for **Charmed Grafana** using standard Juju commands.
 
-### Step 1: Deploy Charmed Grafana
+### Step 1: Deploy and Expose Charmed Grafana
 Deploy Grafana within your Juju model:
 ```bash
 juju deploy grafana-k8s
+```
+
+To expose Grafana's dashboard externally through your Traefik Ingress, establish an ingress integration using Traefik's `traefik-route` endpoint:
+```bash
+# If Traefik is in the same model:
+juju integrate grafana-k8s:ingress traefik-public:traefik-route
+
+# If Traefik is deployed in a different model (e.g., 'core'):
+juju integrate grafana-k8s:ingress core.traefik-public:traefik-route
 ```
 
 ### Step 2: Establish the OAuth Relation
@@ -33,7 +51,7 @@ To connect Grafana with the Authentik Server OIDC provider, establish the integr
 
 #### Option A: Via Juju CLI
 ```bash
-juju relate grafana-k8s:oauth authentik-server:oauth
+juju integrate grafana-k8s:oauth authentik-server:oauth
 ```
 
 #### Option B: Via Terraform
@@ -58,11 +76,11 @@ resource "juju_integration" "grafana_auth" {
 
 Since Grafana must execute backend HTTP requests to Authentik to exchange tokens, it must trust the certificate authority (CA) that issued Authentik's SSL certificates.
 
-If you are using self-signed certificates, relate Grafana to your CA provider to automatically transfer the trust chain:
+If you are using self-signed certificates, integrate Grafana with your CA provider to automatically transfer the trust chain:
 
 ```bash
 # Integrate Grafana to trust the CA certs
-juju relate grafana-k8s:receive-ca-cert self-signed-certificates:send-ca-cert
+juju integrate grafana-k8s:receive-ca-cert self-signed-certificates:send-ca-cert
 ```
 
 ---
@@ -74,8 +92,8 @@ juju relate grafana-k8s:receive-ca-cert self-signed-certificates:send-ca-cert
    ```bash
    juju status grafana-k8s
    ```
-2. Navigate to your Grafana URL (e.g., `https://<traefik-ip>/iam-grafana-k8s`).
-3. The login page will now display a **"Log in with Authentik"** button.
+2. Navigate to your Grafana URL. The URL path is model-dependent and follows the template `https://<traefik-ip>/<model-name>-<app-name>` (e.g., `https://<traefik-ip>/authentik-grafana-k8s` if deployed in the `authentik` model).
+3. The login page will now display a federated authentication button labeled **"Sign in with OAuth"** (or generic "Log in with External Identity Provider" depending on configuration).
 4. Click the button; you will be seamlessly redirected to your Authentik login portal.
 5. Authenticate using your credentials (e.g., `akadmin` or your tenant user account).
 6. Upon successful authentication, you are securely redirected back to Grafana with an active, authorized dashboard session.

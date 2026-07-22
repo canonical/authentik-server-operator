@@ -110,7 +110,7 @@ The Authentik admin dashboard is published securely via Traefik.
    juju status -m core traefik-public
    ```
 2. **Browse to the Portal**:
-   Point your browser to the URL corresponding to your configured domain or Traefik LoadBalancer IP (e.g., `https://<traefik-ip>/iam-authentik-server`) and log in using your retrieved credentials.
+   Point your browser to the URL corresponding to your configured domain or Traefik LoadBalancer IP (e.g., `https://<traefik-ip>/`) and log in using your retrieved credentials.
 
 ---
 
