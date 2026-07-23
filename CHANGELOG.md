@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0](https://github.com/canonical/authentik-server-operator/compare/v1.1.0...v1.2.0) (2026-07-23)
+
+
+### Features
+
+* harden Authentik API integration and adopt api-token server-info contract ([1aac854](https://github.com/canonical/authentik-server-operator/commit/1aac8548118bbe438c74a95ead71c8b8b91ba4a3))
+
+
+### Bug Fixes
+
+* drop bootstrap-token fallback from server-info requirer (LIBPATCH 5) ([2ed3d43](https://github.com/canonical/authentik-server-operator/commit/2ed3d43c2650f3adb0617a4436230c3dfb865f0a))
+* gate server-info publication on Authentik API readiness ([ecc4c8e](https://github.com/canonical/authentik-server-operator/commit/ecc4c8e2b40ab4b6064c6907de01ce8f3e8f2400))
+* gate server-info publication on Authentik API readiness ([#66](https://github.com/canonical/authentik-server-operator/issues/66)) ([7975a92](https://github.com/canonical/authentik-server-operator/commit/7975a926563b2dcde44b40cd499de9cb4e7e8126))
+* publish server-info promptly when the workload API recovers ([0d30d2f](https://github.com/canonical/authentik-server-operator/commit/0d30d2fc23c87e9d12ce3efd2345715e302511e0))
+* publish server-info promptly when the workload API recovers ([#67](https://github.com/canonical/authentik-server-operator/issues/67)) ([923446e](https://github.com/canonical/authentik-server-operator/commit/923446e984cf4a4df77a2cd5fe2f6d6347858356))
+
 ## [1.1.0](https://github.com/canonical/authentik-server-operator/compare/v1.0.0...v1.1.0) (2026-07-21)
 
 
