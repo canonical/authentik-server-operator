@@ -34,6 +34,9 @@ SECRETS_LABEL = "authentik-server-secrets"
 SECRETS_PEER_KEY = "secrets_id"
 
 OAUTH_SYNC_CACHE_PEER_KEY = "oauth_sync_cache"
+OAUTH_MANAGED_NAMESPACE = "juju"
+OAUTH_CACHE_SCHEMA_VERSION = 2
+OAUTH_MODEL_UUID_HASH_LENGTH = 12
 AUTHORIZATION_FLOW_CACHE_PEER_KEY = "authorization_flow_cache"
 INVALIDATION_FLOW_CACHE_PEER_KEY = "invalidation_flow_cache"
 

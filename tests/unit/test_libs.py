@@ -113,8 +113,7 @@ class _ServerInfoProviderCharm(ops.CharmBase):
     def _on_ready(self, event: ops.EventBase) -> None:
         self.server_info_provider.update_relations_app_data(
             authentik_host="http://authentik:9000",
-            bootstrap_token="test-token",
-            bootstrap_password="test-password",
+            api_token="test-token",
         )
 
 
@@ -386,7 +385,7 @@ class TestAuthentikServerInfoProvider:
     def context(self) -> testing.Context:
         return testing.Context(_ServerInfoProviderCharm, meta=_SERVER_INFO_PROVIDER_META)
 
-    def test_update_relations_app_data_creates_secrets_and_publishes(
+    def test_update_relations_app_data_creates_secret_and_publishes(
         self, context: testing.Context
     ) -> None:
         relation = testing.Relation("authentik-server-info")
@@ -394,12 +393,12 @@ class TestAuthentikServerInfoProvider:
 
         state_out = context.run(context.on.relation_created(relation), state)
 
-        assert any(s.label == "authentik-bootstrap-token" for s in state_out.secrets)
-        assert any(s.label == "authentik-bootstrap-password" for s in state_out.secrets)
+        assert any(s.label == "authentik-api-token" for s in state_out.secrets)
+        assert not any(s.label == "authentik-bootstrap-password" for s in state_out.secrets)
         rel_out = state_out.get_relation(relation.id)
         assert rel_out.local_app_data.get("authentik_host") == "http://authentik:9000"
         assert "authentik_token_secret_id" in rel_out.local_app_data
-        assert "bootstrap_password_secret_id" in rel_out.local_app_data
+        assert "bootstrap_password_secret_id" not in rel_out.local_app_data
 
     def test_update_relations_app_data_noop_for_non_leader(self, context: testing.Context) -> None:
         relation = testing.Relation("authentik-server-info")
@@ -407,49 +406,33 @@ class TestAuthentikServerInfoProvider:
 
         state_out = context.run(context.on.relation_created(relation), state)
 
-        assert not any(s.label == "authentik-bootstrap-token" for s in state_out.secrets)
-        assert not any(s.label == "authentik-bootstrap-password" for s in state_out.secrets)
+        assert not any(s.label == "authentik-api-token" for s in state_out.secrets)
 
-    def test_relation_broken_removes_secrets(self, context: testing.Context) -> None:
+    def test_relation_broken_removes_secret(self, context: testing.Context) -> None:
         relation = testing.Relation("authentik-server-info")
         token_secret = testing.Secret(
-            label="authentik-bootstrap-token",
-            tracked_content={"bootstrap-token": "test-token"},
-            owner="app",
-        )
-        password_secret = testing.Secret(
-            label="authentik-bootstrap-password",
-            tracked_content={"bootstrap-password": "test-password"},
+            label="authentik-api-token",
+            tracked_content={"api-token": "test-token"},
             owner="app",
         )
         state = testing.State(
             leader=True,
             relations=[relation],
-            secrets=[token_secret, password_secret],
+            secrets=[token_secret],
         )
 
         state_out = context.run(context.on.relation_broken(relation), state)
 
-        assert not any(s.label == "authentik-bootstrap-token" for s in state_out.secrets)
-        assert not any(s.label == "authentik-bootstrap-password" for s in state_out.secrets)
+        assert not any(s.label == "authentik-api-token" for s in state_out.secrets)
 
-    def test_relation_broken_keeps_secrets_if_other_relations_exist(
+    def test_relation_broken_keeps_secret_if_other_relations_exist(
         self, context: testing.Context
     ) -> None:
         relation_broken = testing.Relation("authentik-server-info", id=1)
         relation_active = testing.Relation("authentik-server-info", id=2)
         token_secret = testing.Secret(
-            label="authentik-bootstrap-token",
-            tracked_content={"bootstrap-token": "test-token"},
-            owner="app",
-            remote_grants={
-                relation_broken.id: {relation_broken.remote_app_name},
-                relation_active.id: {relation_active.remote_app_name},
-            },
-        )
-        password_secret = testing.Secret(
-            label="authentik-bootstrap-password",
-            tracked_content={"bootstrap-password": "test-password"},
+            label="authentik-api-token",
+            tracked_content={"api-token": "test-token"},
             owner="app",
             remote_grants={
                 relation_broken.id: {relation_broken.remote_app_name},
@@ -459,26 +442,17 @@ class TestAuthentikServerInfoProvider:
         state = testing.State(
             leader=True,
             relations=[relation_broken, relation_active],
-            secrets=[token_secret, password_secret],
+            secrets=[token_secret],
         )
 
         state_out = context.run(context.on.relation_broken(relation_broken), state)
 
-        assert any(s.label == "authentik-bootstrap-token" for s in state_out.secrets)
-        assert any(s.label == "authentik-bootstrap-password" for s in state_out.secrets)
+        assert any(s.label == "authentik-api-token" for s in state_out.secrets)
 
-        token_secret_out = next(
-            s for s in state_out.secrets if s.label == "authentik-bootstrap-token"
-        )
-        password_secret_out = next(
-            s for s in state_out.secrets if s.label == "authentik-bootstrap-password"
-        )
+        token_secret_out = next(s for s in state_out.secrets if s.label == "authentik-api-token")
 
         assert relation_broken.id not in token_secret_out.remote_grants
         assert relation_active.id in token_secret_out.remote_grants
-
-        assert relation_broken.id not in password_secret_out.remote_grants
-        assert relation_active.id in password_secret_out.remote_grants
 
 
 # ---------------------------------------------------------------------------
@@ -493,24 +467,18 @@ class TestAuthentikServerInfoRequirer:
 
     @pytest.fixture
     def token_secret(self) -> testing.Secret:
-        return testing.Secret(tracked_content={"bootstrap-token": "test-token"})
-
-    @pytest.fixture
-    def password_secret(self) -> testing.Secret:
-        return testing.Secret(tracked_content={"bootstrap-password": "test-password"})
+        return testing.Secret(tracked_content={"api-token": "test-token"})
 
     @pytest.fixture
     def server_info_relation(
         self,
         token_secret: testing.Secret,
-        password_secret: testing.Secret,
     ) -> testing.Relation:
         return testing.Relation(
             "authentik-server-info",
             remote_app_data={
                 "authentik_host": "http://authentik:9000",
                 "authentik_token_secret_id": token_secret.id,
-                "bootstrap_password_secret_id": password_secret.id,
             },
         )
 
@@ -519,12 +487,11 @@ class TestAuthentikServerInfoRequirer:
         context: testing.Context,
         server_info_relation: testing.Relation,
         token_secret: testing.Secret,
-        password_secret: testing.Secret,
     ) -> None:
         state = testing.State(
             leader=False,
             relations=[server_info_relation],
-            secrets=[token_secret, password_secret],
+            secrets=[token_secret],
         )
 
         state_out = context.run(context.on.relation_changed(server_info_relation), state)
@@ -536,12 +503,11 @@ class TestAuthentikServerInfoRequirer:
         context: testing.Context,
         server_info_relation: testing.Relation,
         token_secret: testing.Secret,
-        password_secret: testing.Secret,
     ) -> None:
         state = testing.State(
             leader=False,
             relations=[server_info_relation],
-            secrets=[token_secret, password_secret],
+            secrets=[token_secret],
         )
 
         state_out = context.run(context.on.relation_broken(server_info_relation), state)
@@ -553,12 +519,11 @@ class TestAuthentikServerInfoRequirer:
         context: testing.Context,
         server_info_relation: testing.Relation,
         token_secret: testing.Secret,
-        password_secret: testing.Secret,
     ) -> None:
         state = testing.State(
             leader=False,
             relations=[server_info_relation],
-            secrets=[token_secret, password_secret],
+            secrets=[token_secret],
         )
 
         state_out = context.run(context.on.relation_changed(server_info_relation), state)
@@ -570,12 +535,11 @@ class TestAuthentikServerInfoRequirer:
         context: testing.Context,
         server_info_relation: testing.Relation,
         token_secret: testing.Secret,
-        password_secret: testing.Secret,
     ) -> None:
         state = testing.State(
             leader=False,
             relations=[server_info_relation],
-            secrets=[token_secret, password_secret],
+            secrets=[token_secret],
         )
 
         with context(context.on.relation_changed(server_info_relation), state) as mgr:
@@ -584,7 +548,26 @@ class TestAuthentikServerInfoRequirer:
         assert isinstance(data, ServerInfoProviderData)
         assert data.authentik_host == "http://authentik:9000"
         assert data.authentik_token_secret_id == token_secret.id
-        assert data.bootstrap_password_secret_id == password_secret.id
+
+    def test_get_authentik_token_returns_api_token(self, context: testing.Context) -> None:
+        token_secret = testing.Secret(tracked_content={"api-token": "dedicated"})
+        relation = testing.Relation(
+            "authentik-server-info",
+            remote_app_data={
+                "authentik_host": "http://authentik:9000",
+                "authentik_token_secret_id": token_secret.id,
+            },
+        )
+        state = testing.State(
+            leader=False,
+            relations=[relation],
+            secrets=[token_secret],
+        )
+
+        with context(context.on.relation_changed(relation), state) as mgr:
+            token = mgr.charm.server_info.get_authentik_token()
+
+        assert token == "dedicated"
 
     def test_is_ready_false_when_no_relation(self, context: testing.Context) -> None:
         state = testing.State(leader=False)

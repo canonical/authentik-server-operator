@@ -67,9 +67,9 @@ The existing unit tests target the pre-refactor API and are broken. The tenant-s
 
 **Rationale**: `test_authentik_cluster.py` and `test_authentik_server_info.py` import private names (`_CLUSTER_SECRET_LABEL`, `_PASSWORD_SECRET_LABEL`) that don't exist in the library. These are library tests, not charm tests. Library tests belong with the library's own test suite. Deleting them removes broken tests without losing charm coverage.
 
-### D8: `peer_relation` fixture — simplified (no secret IDs)
+### D8: `peer_relation` fixture — include the consolidated secret ID
 
-**Rationale**: The refactored `Secrets` class looks up secrets by **label** (via `model.get_secret(label=...)`), not by ID from the peer databag. The peer relation fixture no longer needs secret ID references — it just needs to exist.
+**Rationale**: `Secrets` retrieves the consolidated secret by the ID persisted in the peer app databag. The fixture therefore includes that ID and the matching Scenario secret so all units follow the production lookup path.
 
 ## Risks / Trade-offs
 

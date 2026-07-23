@@ -1,9 +1,5 @@
-# oauth-relation Specification
+## MODIFIED Requirements
 
-## Purpose
-
-The purpose of the `oauth` integration specification is to define the requirements and behavior of the Authentik Server charm acting as an OAuth2/OIDC Identity Provider. It defines how client applications integrate with Authentik to dynamically register themselves as OIDC clients, receive secure credentials (`client_id` and `client_secret`), and retrieve necessary OIDC discovery endpoints (such as `issuer_url`, `authorization_endpoint`, `token_endpoint`, and `jwks_endpoint`) that update automatically when ingress or external hostname changes occur.
-## Requirements
 ### Requirement: Provision OAuth Relation
 
 The Authentik Server charm SHALL implement the `provides` side of the `oauth` Juju integration, SHALL provision a uniquely owned Authentik provider and application for each relation, and SHALL expose client credentials only after those Authentik resources are synchronized.
@@ -23,6 +19,8 @@ The Authentik Server charm MUST update the `issuer_url` and other OIDC discovery
 #### Scenario: Ingress Update Triggers Endpoint Changes
 - **WHEN** the ingress URL is updated or revoked
 - **THEN** the charm MUST update the OIDC endpoints in every active `oauth` relation databag
+
+## ADDED Requirements
 
 ### Requirement: OAuth resource ownership
 
@@ -75,4 +73,3 @@ The charm SHALL resolve requested OIDC scopes through the explicit Authentik sco
 #### Scenario: Unsupported scope
 - **WHEN** a requested scope has no exact mapping
 - **THEN** reconciliation SHALL fail without attaching unrelated mappings
-

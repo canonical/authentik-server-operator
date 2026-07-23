@@ -5,7 +5,7 @@
 - [x] 1.3 Add condition mock fixtures to `tests/unit/conftest.py`: `mocked_container_connectivity`, `mocked_database_integration_exists`, `mocked_database_resource_is_created`, `mocked_secrets_is_ready`, `mocked_workload_is_running`, `mocked_workload_is_failing`
 - [x] 1.4 Add `all_satisfied_conditions` composite fixture to `tests/unit/conftest.py` that activates all condition mocks at once
 - [x] 1.5 Add service mock fixtures to `tests/unit/conftest.py`: `mocked_workload_service_version` (PropertyMock), `mocked_open_port`, `mocked_holistic_handler`
-- [x] 1.6 Simplify `peer_relation` fixture — remove secret ID references from local app data (secrets are now looked up by label)
+- [x] 1.6 Keep the `peer_relation` fixture aligned with consolidated secret storage by including the secret ID in local app data
 
 ## 2. test_charm.py rewrite
 
@@ -19,27 +19,27 @@
 
 ## 3. test_integrations.py (new, consolidated)
 
-- [ ] 3.1 Create `tests/unit/test_integrations.py` with `TestDatabaseConfig` class: `test_load` (valid relation data), `test_load_empty` (no relations), `test_load_no_endpoints`, `test_to_env_vars` — using `create_autospec(DatabaseRequires)`
-- [ ] 3.2 Add `TestTracingData` class to `tests/unit/test_integrations.py`: `test_load` (ready), `test_load_not_ready`, `test_to_env_vars_ready`, `test_to_env_vars_not_ready` — using `create_autospec(TracingEndpointRequirer)`
+- [x] 3.1 Create `tests/unit/test_integrations.py` with `TestDatabaseConfig` class: `test_load` (valid relation data), `test_load_empty` (no relations), `test_load_no_endpoints`, `test_to_env_vars` — using `create_autospec(DatabaseRequires)`
+- [x] 3.2 Add `TestTracingData` class to `tests/unit/test_integrations.py`: `test_load` (ready), `test_load_not_ready`, `test_to_env_vars_ready`, `test_to_env_vars_not_ready` — using `create_autospec(TracingEndpointRequirer)`
 
 ## 4. test_configs.py (new)
 
-- [ ] 4.1 Create `tests/unit/test_configs.py` with `TestCharmConfig` class: `test_to_env_vars` (full config), `test_to_env_vars_defaults` (minimal config), `test_get_missing_config_keys`
+- [x] 4.1 Create `tests/unit/test_configs.py` with `TestCharmConfig` class: `test_to_env_vars` (full config), `test_to_env_vars_defaults` (minimal config), `test_get_missing_config_keys`
 
 ## 5. test_secret.py (new)
 
-- [ ] 5.1 Create `tests/unit/test_secret.py` with `TestSecrets` class using `create_autospec(Model)`: `test_getitem_exists`, `test_getitem_not_found`, `test_getitem_invalid_label`, `test_setitem`, `test_setitem_invalid_label`
-- [ ] 5.2 Add to `TestSecrets`: `test_is_ready_true`, `test_is_ready_false`, `test_to_env_vars`
-- [ ] 5.3 Add to `TestSecrets`: property tests — `test_secret_key_property`, `test_secret_key_not_available` (raises `SecretError`), `test_bootstrap_token_property`, `test_bootstrap_token_not_available`, `test_bootstrap_password_property`, `test_bootstrap_password_not_available`
+- [x] 5.1 Create `tests/unit/test_secret.py` with `TestSecrets` using `create_autospec(Model)`: secret creation stores the ID in peer data, creation is idempotent, and a missing peer is handled
+- [x] 5.2 Add to `TestSecrets`: ready and not-ready cases (missing peer and missing secret), plus `test_to_env_vars`
+- [x] 5.3 Add to `TestSecrets`: property tests — `test_secret_key_property`, `test_secret_key_not_available` (raises `SecretError`), `test_bootstrap_token_property`, `test_bootstrap_token_not_available`, `test_bootstrap_password_property`, `test_bootstrap_password_not_available`
 
 ## 6. Cleanup
 
-- [ ] 6.1 Delete `tests/unit/test_tracing_integration.py` (merged into `test_integrations.py`)
-- [ ] 6.2 Delete `tests/unit/test_authentik_cluster.py` (broken library test)
-- [ ] 6.3 Delete `tests/unit/test_authentik_server_info.py` (broken library test)
+- [x] 6.1 Confirm `tests/unit/test_tracing_integration.py` is absent (coverage is consolidated in `test_integrations.py`)
+- [x] 6.2 Confirm `tests/unit/test_authentik_cluster.py` is absent (library behavior is outside the charm unit suite)
+- [x] 6.3 Confirm `tests/unit/test_authentik_server_info.py` is absent (library behavior is outside the charm unit suite)
 
 ## 7. Validation
 
-- [ ] 7.1 Run `tox -e fmt` and fix any formatting issues
-- [ ] 7.2 Run `tox -e lint` and fix any linting errors
-- [ ] 7.3 Run `tox -e unit` and verify all tests pass
+- [x] 7.1 Parent-owned repository-wide validation: run `tox -e fmt` and fix any formatting issues
+- [x] 7.2 Parent-owned repository-wide validation: run `tox -e lint` and fix any linting errors
+- [x] 7.3 Parent-owned repository-wide validation: run `tox -e unit` and verify all tests pass
