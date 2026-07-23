@@ -78,7 +78,7 @@ from pydantic import BaseModel, ValidationError
 
 LIBID = "786e915b50384bbdaf17fa871eb6202f"
 LIBAPI = 0
-LIBPATCH = 4
+LIBPATCH = 5
 
 PYDEPS = ["pydantic"]
 
@@ -294,17 +294,11 @@ class AuthentikServerInfoRequirer(Object):
             return None
 
     def get_authentik_token(self) -> Optional[str]:
-        """Retrieve the automation API token from the granted Juju secret.
-
-        Prefers the canonical ``api-token`` key and falls back to the legacy
-        ``bootstrap-token`` key, so the outpost tolerates a not-yet-upgraded
-        provider during a rolling upgrade.
-        """
+        """Retrieve the API token from the granted Juju secret."""
         data = self.get_provider_data()
         if not data:
             return None
         secret = self._get_secret(data.authentik_token_secret_id)
         if not secret:
             return None
-        content = secret.get_content()
-        return content.get("api-token") or content.get("bootstrap-token")
+        return secret.get_content().get("api-token")
