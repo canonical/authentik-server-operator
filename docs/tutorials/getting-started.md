@@ -122,11 +122,11 @@ The Authentik admin dashboard is published securely via Traefik.
 > To automatically propagate and trust the CA certificate across your deployment, offer the CA service from the `core` model and integrate your consumer application over the `certificate_transfer` interface:
 > 
 > ```bash
-> # 1. Offer the certificates from the core model
-> juju offer -m core self-signed-certificates:send-ca-cert
+> # 1. Offer the CA service from the core model (`juju offer` has no -m flag; the model is part of the spec)
+> juju offer core.self-signed-certificates:send-ca-cert
 > 
-> # 2. Integrate your consumer application (e.g., grafana-k8s) to trust the CA chain
-> juju integrate -m core <consumer-application>:receive-ca-cert admin/core.self-signed-certificates
+> # 2. Integrate your consumer app (e.g. grafana-k8s in the 'authentik' model) to trust the CA chain
+> juju integrate -m authentik <consumer-application>:receive-ca-cert admin/core.self-signed-certificates
 > ```
 
 ---

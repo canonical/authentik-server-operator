@@ -79,8 +79,13 @@ Since Grafana must execute backend HTTP requests to Authentik to exchange tokens
 If you are using self-signed certificates, integrate Grafana with your CA provider to automatically transfer the trust chain:
 
 ```bash
-# Integrate Grafana to trust the CA certs
+# If the CA provider is in the same model as Grafana:
 juju integrate grafana-k8s:receive-ca-cert self-signed-certificates:send-ca-cert
+
+# If the CA provider is in another model (e.g. 'core', as in the tutorial topology),
+# offer it once and consume it cross-model:
+juju offer core.self-signed-certificates:send-ca-cert
+juju integrate -m authentik grafana-k8s:receive-ca-cert admin/core.self-signed-certificates
 ```
 
 ---
@@ -93,7 +98,7 @@ juju integrate grafana-k8s:receive-ca-cert self-signed-certificates:send-ca-cert
    juju status grafana-k8s
    ```
 2. Navigate to your Grafana URL. The URL path is model-dependent and follows the template `https://<traefik-ip>/<model-name>-<app-name>` (e.g., `https://<traefik-ip>/authentik-grafana-k8s` if deployed in the `authentik` model).
-3. The login page will now display a federated authentication button labeled **"Sign in with OAuth"** (or generic "Log in with External Identity Provider" depending on configuration).
+3. The login page will now display a federated authentication button labeled **"Sign in with external identity provider"** (Grafana's generic-OAuth default; the exact label can vary by consumer application and configuration).
 4. Click the button; you will be seamlessly redirected to your Authentik login portal.
 5. Authenticate using your credentials (e.g., `akadmin` or your tenant user account).
 6. Upon successful authentication, you are securely redirected back to Grafana with an active, authorized dashboard session.

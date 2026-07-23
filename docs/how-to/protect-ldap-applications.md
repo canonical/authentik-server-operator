@@ -137,14 +137,14 @@ juju config authentik-ldap-outpost base_dn="dc=enterprise,dc=local"
 ```
 
 ### 3. `search_mode` & `bind_mode` (Performance and Caching)
-To scale directory performance in high-traffic environments, you can configure the outpost to cache query results locally in memory instead of executing real-time core API lookups on every request:
-* **`direct`** (Default): Executes real-time REST API requests to the core server for every query/bind. Highly secure and dynamic.
-* **`cached`**: Caches read lookups and authentication successes locally, reducing background network round-trips and lowering server CPU load.
+The outpost can serve queries/binds from a local cache or hit the core API live:
+* **`cached`** (Default): Caches read lookups and authentication successes locally, reducing background network round-trips and lowering server CPU load. Trade-off: search results, password changes, and session revocations can lag until the cache refreshes.
+* **`direct`**: Executes real-time REST API requests to the core server for every query/bind. Most dynamic and immediately consistent, at higher API load.
 
-Configure caching using:
+Both options default to `cached`. To require live consistency instead, set both to `direct`:
 ```bash
-juju config authentik-ldap-outpost search_mode="cached"
-juju config authentik-ldap-outpost bind_mode="cached"
+juju config authentik-ldap-outpost search_mode="direct"
+juju config authentik-ldap-outpost bind_mode="direct"
 ```
 
 ### 4. `mfa_support` (Multi-Factor Authentication)
