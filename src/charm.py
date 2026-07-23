@@ -353,12 +353,26 @@ class AuthentikServerCharm(ops.CharmBase):
         The API token is currently the bootstrap admin token, shared under the
         canonical ``api-token`` key. Provisioning a dedicated least-privilege
         automation token is deferred to a later change.
+
+        Publication is gated on the workload API being reachable so consumers are
+        only triggered (via the resulting databag change) once Authentik can
+        actually serve requests, avoiding a premature provisioning attempt during
+        first boot.
         """
         if not (
             self.unit.is_leader()
             and self._secrets.is_ready()
             and self.model.relations[SERVER_INFO_RELATION]
         ):
+            return True
+
+        if not self._workload_service.is_running():
+            logger.info("Authentik workload is not ready for server-info publication")
+            return True
+
+        api = AuthentikAPI(self._secrets.bootstrap_token)
+        if not api.is_service_available():
+            logger.info("Authentik API is not available yet for server-info publication")
             return True
 
         self.server_info_provider.update_relations_app_data(
