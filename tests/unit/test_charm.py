@@ -669,6 +669,7 @@ class TestPebbleCheckEvents:
         context: testing.Context,
         container: testing.Container,
         all_satisfied_conditions: None,
+        mocked_holistic_handler: MagicMock,
         mocker: MockerFixture,
     ) -> None:
         mocked_logger = mocker.patch("charm.logger")
@@ -707,6 +708,7 @@ class TestPebbleCheckEvents:
         )
 
         mocked_logger.info.assert_called_once_with("The authentik service is online again")
+        mocked_holistic_handler.assert_called_once()
 
 
 class TestClusterRelationEvents:

@@ -509,6 +509,10 @@ class AuthentikServerCharm(ops.CharmBase):
         """Handle the pebble-check-recovered event."""
         if event.info.name == PEBBLE_READY_CHECK_NAME:
             logger.info("The authentik service is online again")
+            # Re-run reconciliation so the server-info relation (whose publication
+            # is gated on API readiness) is populated as soon as the API recovers,
+            # instead of waiting for the next update-status tick.
+            self._on_holistic_handler(event)
 
     def _on_database_relation_broken(self, event: ops.RelationBrokenEvent) -> None:
         """Handle the database relation-broken event."""
