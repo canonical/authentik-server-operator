@@ -229,6 +229,70 @@ class TestHolisticHandler:
         with pytest.raises(UncaughtCharmError, match="retry budget exhausted"):
             context.run(context.on.config_changed(), state)
 
+    def test_server_info_not_published_before_api_ready(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        server_info_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        """Server-info stays unpublished while the workload API is unavailable."""
+        mocker.patch("charm.AuthentikServerCharm._ensure_oauth_relation", return_value=True)
+        api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
+        api.is_service_available.return_value = False
+        publish = mocker.patch("charm.AuthentikServerInfoProvider.update_relations_app_data")
+        state = create_state(
+            relations=[
+                db_relation,
+                peer_relation,
+                cluster_relation,
+                server_info_relation,
+                traefik_route_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        context.run(context.on.config_changed(), state)
+
+        publish.assert_not_called()
+
+    def test_server_info_published_once_api_ready(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        server_info_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        """Server-info is published once the workload API becomes reachable."""
+        mocker.patch("charm.AuthentikServerCharm._ensure_oauth_relation", return_value=True)
+        api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
+        api.is_service_available.return_value = True
+        publish = mocker.patch("charm.AuthentikServerInfoProvider.update_relations_app_data")
+        state = create_state(
+            relations=[
+                db_relation,
+                peer_relation,
+                cluster_relation,
+                server_info_relation,
+                traefik_route_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        context.run(context.on.config_changed(), state)
+
+        publish.assert_called_once()
+
 
 class TestCollectStatusEvent:
     def test_when_all_conditions_satisfied(
