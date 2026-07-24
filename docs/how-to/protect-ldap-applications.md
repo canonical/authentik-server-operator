@@ -120,23 +120,13 @@ In production, to preserve client source IPs for auditing and rate-limiting, int
 
 For specialized production use cases, the `authentik-ldap-outpost` charm provides several configuration parameters to customize security policies, performance behaviors, and authentication workflows.
 
-### 1. `search_group` (Customizing Read Restrictions)
-By default, Charmed Authentik restricts LDAP directory search queries to users belonging to the `"authentik Admingroup"`. When a downstream application integrates over the `ldap` interface, the charm automatically creates a service account user and adds it to this group.
-
-If you have manually modified your Authentik directory rules to restrict search queries to a custom group (e.g. `ldap-readers`), configure the charm to associate newly created service accounts to this group:
-```bash
-juju config authentik-ldap-outpost search_group="ldap-readers"
-```
-> [!NOTE]
-> If the group name specified in `search_group` does not exist on your Authentik Server, the charm will log a warning, and newly provisioned service accounts may be unable to search the directory until group permissions are resolved.
-
-### 2. `base_dn` (Custom Directory Schema Roots)
+### 1. `base_dn` (Custom Directory Schema Roots)
 If your client applications expect directory objects to reside under a custom root path, you can customize the base Distinguished Name (DN) used for LDAP lookups:
 ```bash
 juju config authentik-ldap-outpost base_dn="dc=enterprise,dc=local"
 ```
 
-### 3. `search_mode` & `bind_mode` (Performance and Caching)
+### 2. `search_mode` & `bind_mode` (Performance and Caching)
 The outpost can serve queries/binds from a local cache or hit the core API live:
 * **`cached`** (Default): Caches read lookups and authentication successes locally, reducing background network round-trips and lowering server CPU load. Trade-off: search results, password changes, and session revocations can lag until the cache refreshes.
 * **`direct`**: Executes real-time REST API requests to the core server for every query/bind. Most dynamic and immediately consistent, at higher API load.
@@ -147,7 +137,7 @@ juju config authentik-ldap-outpost search_mode="direct"
 juju config authentik-ldap-outpost bind_mode="direct"
 ```
 
-### 4. `mfa_support` (Multi-Factor Authentication)
+### 3. `mfa_support` (Multi-Factor Authentication)
 For environments requiring Multi-Factor Authentication (MFA) on directory binds, you can enable password-appending MFA support:
 ```bash
 juju config authentik-ldap-outpost mfa_support=true
