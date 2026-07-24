@@ -12,8 +12,16 @@ from ops import testing
 from pytest_mock import MockerFixture
 from unit.conftest import create_state
 
-from constants import OAUTH_RELATION_NAME
-from exceptions import AuthentikConflictError, AuthentikTransientError
+from constants import (
+    AUTHORIZATION_FLOW_CACHE_PEER_KEY,
+    INVALIDATION_FLOW_CACHE_PEER_KEY,
+    OAUTH_RELATION_NAME,
+)
+from exceptions import (
+    AuthentikConflictError,
+    AuthentikRequestValidationError,
+    AuthentikTransientError,
+)
 from oauth import OauthReconciler
 
 
@@ -741,3 +749,52 @@ def test_oauth_default_scope_excludes_phone(
     mock_authentik_api.get_property_mappings.assert_called_with(["email", "openid", "profile"])
     rel_out = state_out.get_relation(oauth_relation.id)
     assert "phone" not in rel_out.local_app_data["scope"]
+
+
+def test_stale_cached_provider_is_rediscovered_after_external_deletion(
+    mocker: MockerFixture,
+) -> None:
+    """A cached provider deleted out-of-band is dropped and recreated, not PUT into a 404 loop."""
+    api = MagicMock()
+    # Fast path: the cached application still resolves and references the cached pk...
+    api.get_application.side_effect = [{"provider": 123}, None, None]
+    # ...but the cached provider itself no longer exists in Authentik.
+    api.get_oauth_provider.return_value = None
+    api.find_oauth_provider.return_value = None
+    api.create_oauth_provider.return_value = 456
+    peer = FakePeerData({
+        "7": {"schema_version": 2, "slug": "owned-app", "provider_pk": 123, "config_hash": "x"}
+    })
+    reconciler = make_reconciler(mocker, api, peer)
+
+    slug, provider_pk = sync_objects(reconciler, relation(), peer["oauth_sync_cache"])
+
+    api.get_oauth_provider.assert_called_once_with(123)
+    api.create_oauth_provider.assert_called_once()
+    assert provider_pk == 456
+    assert api.update_oauth_provider.call_args.kwargs["provider_pk"] == 456
+    api.create_application.assert_called_once()
+    assert peer.data["oauth_sync_cache"]["7"]["provider_pk"] == 456
+
+
+def test_reconcile_invalidates_flow_cache_when_a_sync_hits_a_stale_flow(
+    mocker: MockerFixture,
+) -> None:
+    """A stale cached flow UUID (flow recreated in Authentik) is dropped so it re-resolves."""
+    api = MagicMock()
+    peer = FakePeerData()
+    peer.set_string(AUTHORIZATION_FLOW_CACHE_PEER_KEY, "stale-auth-flow")
+    peer.set_string(INVALIDATION_FLOW_CACHE_PEER_KEY, "stale-inval-flow")
+    reconciler = make_reconciler(mocker, api, peer)
+    reconciler._charm.unit.is_leader.return_value = True
+    reconciler._charm.model.get_relation.return_value = relation()
+    mocker.patch.object(
+        reconciler, "_sync_relation", side_effect=AuthentikRequestValidationError("stale flow")
+    )
+
+    with pytest.raises(AuthentikRequestValidationError, match="stale flow"):
+        reconciler.reconcile({7})
+
+    assert peer.get_string(AUTHORIZATION_FLOW_CACHE_PEER_KEY) == ""
+    assert peer.get_string(INVALIDATION_FLOW_CACHE_PEER_KEY) == ""
+    api.get_authorization_flow_uuid.assert_not_called()

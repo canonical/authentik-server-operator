@@ -141,7 +141,7 @@ class AuthentikAPI:
         """
         url = f"{self.base_url}/api/v3/flows/instances/"
         try:
-            self._request("GET", url)
+            self._request("GET", url, params={"page_size": 1})
         except AuthentikAPIError:
             return False
         return True
@@ -339,25 +339,28 @@ class AuthentikAPI:
         return True
 
     def update_application(self, slug: str, name: str, provider_pk: int) -> bool:
-        """Update an existing application."""
+        """Update an existing application's name/provider via PATCH.
+
+        A partial update is required: a full PUT must include every required field
+        (notably ``slug``, which this caller does not resend), so Authentik rejects
+        it with HTTP 400. PATCH only touches the fields sent here.
+        """
         url = f"{self.base_url}/api/v3/core/applications/{slug}/"
-        self._request("PUT", url, json={"name": name, "provider": provider_pk})
+        self._request("PATCH", url, json={"name": name, "provider": provider_pk})
         return True
 
-    def delete_application(self, slug: str) -> bool:
+    def delete_application(self, slug: str) -> None:
         """Delete an application, treating absence as success."""
         url = f"{self.base_url}/api/v3/core/applications/{slug}/"
         try:
             self._request("DELETE", url)
         except AuthentikNotFoundError:
             pass
-        return True
 
-    def delete_oauth_provider(self, provider_pk: int) -> bool:
+    def delete_oauth_provider(self, provider_pk: int) -> None:
         """Delete an OAuth provider, treating absence as success."""
         url = f"{self.base_url}/api/v3/providers/oauth2/{provider_pk}/"
         try:
             self._request("DELETE", url)
         except AuthentikNotFoundError:
             pass
-        return True
