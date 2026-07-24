@@ -145,3 +145,38 @@ def test_is_service_available_true_when_reachable() -> None:
     api.session.request = MagicMock(return_value=response(200, '{"results": []}'))
 
     assert api.is_service_available() is True
+
+
+def test_update_application_uses_patch_to_preserve_unmanaged_fields() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(200))
+
+    api.update_application(slug="my-app", name="My App", provider_pk=5)
+
+    method, url = api.session.request.call_args.args
+    assert method == "PATCH"
+    assert url.endswith("/api/v3/core/applications/my-app/")
+    assert api.session.request.call_args.kwargs["json"] == {"name": "My App", "provider": 5}
+
+
+def test_is_service_available_probe_limits_page_size() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(200, '{"results": []}'))
+
+    assert api.is_service_available() is True
+    assert api.session.request.call_args.kwargs["params"] == {"page_size": 1}
+
+
+def test_delete_application_treats_missing_as_success() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(404))
+
+    assert api.delete_application("gone") is None
+    api.session.request.assert_called_once()
+
+
+def test_delete_oauth_provider_treats_missing_as_success() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(404))
+
+    assert api.delete_oauth_provider(42) is None

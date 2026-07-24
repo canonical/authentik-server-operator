@@ -7,6 +7,7 @@
 import logging
 import re
 import subprocess
+from functools import cached_property
 from secrets import token_urlsafe
 from urllib.parse import urljoin
 
@@ -347,6 +348,11 @@ class AuthentikServerCharm(ops.CharmBase):
 
         return True
 
+    @cached_property
+    def _authentik_api(self) -> AuthentikAPI:
+        """A single Authentik API client per hook (shared HTTP session and caches)."""
+        return AuthentikAPI(self._secrets.bootstrap_token)
+
     def _ensure_server_info_relation(self, event: ops.EventBase | None = None) -> bool:
         """Publish the Authentik host and API token to the server-info relation.
 
@@ -370,7 +376,7 @@ class AuthentikServerCharm(ops.CharmBase):
             logger.info("Authentik workload is not ready for server-info publication")
             return True
 
-        api = AuthentikAPI(self._secrets.bootstrap_token)
+        api = self._authentik_api
         if not api.is_service_available():
             logger.info("Authentik API is not available yet for server-info publication")
             return True
@@ -444,7 +450,7 @@ class AuthentikServerCharm(ops.CharmBase):
             logger.info("Authentik workload is not ready for OAuth reconciliation")
             return True
 
-        api = AuthentikAPI(self._secrets.bootstrap_token)
+        api = self._authentik_api
         if not api.is_service_available():
             logger.info("Authentik API is not available yet for OAuth reconciliation")
             return True
@@ -481,9 +487,15 @@ class AuthentikServerCharm(ops.CharmBase):
             if client_secret_id:
                 try:
                     secret_obj = self.model.get_secret(id=client_secret_id)
-                    client_secret = secret_obj.get_content()[CLIENT_SECRET_FIELD]
-                except Exception as e:
-                    logger.warning("Failed to read existing secret %s: %s", client_secret_id, e)
+                    client_secret = secret_obj.get_content(refresh=True).get(CLIENT_SECRET_FIELD)
+                except ops.SecretNotFoundError:
+                    logger.warning(
+                        "Client secret %s no longer exists; regenerating", client_secret_id
+                    )
+                except ops.ModelError as e:
+                    raise AuthentikTransientError(
+                        f"Failed to read client secret {client_secret_id!r}: {e}"
+                    ) from e
 
         is_new = False
         if not client_id or not client_secret:

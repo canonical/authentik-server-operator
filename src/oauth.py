@@ -19,7 +19,11 @@ from constants import (
     OAUTH_RELATION_NAME,
     OAUTH_SYNC_CACHE_PEER_KEY,
 )
-from exceptions import AuthentikConflictError, AuthentikTransientError
+from exceptions import (
+    AuthentikConflictError,
+    AuthentikNotFoundError,
+    AuthentikRequestValidationError,
+)
 from integrations import PeerData
 
 logger = logging.getLogger(__name__)
@@ -64,10 +68,17 @@ class OauthReconciler:
             invalidation_flow = self._api.get_invalidation_flow_uuid()
             self._peer_data.set_string(INVALIDATION_FLOW_CACHE_PEER_KEY, invalidation_flow)
 
-        for relation_id in sorted(active_relation_ids):
-            relation = self._charm.model.get_relation(OAUTH_RELATION_NAME, relation_id)
-            if relation:
-                self._sync_relation(relation, authorization_flow, invalidation_flow)
+        try:
+            for relation_id in sorted(active_relation_ids):
+                relation = self._charm.model.get_relation(OAUTH_RELATION_NAME, relation_id)
+                if relation:
+                    self._sync_relation(relation, authorization_flow, invalidation_flow)
+        except (AuthentikRequestValidationError, AuthentikNotFoundError):
+            # A cached flow UUID can go stale if an operator recreates the flow in
+            # Authentik, making every provider write fail; drop the flow caches so the
+            # next reconcile re-resolves them.
+            self._invalidate_flow_caches()
+            raise
 
         self.garbage_collect(active_relation_ids)
 
@@ -82,6 +93,11 @@ class OauthReconciler:
 
     def _save_cache(self, cache: dict) -> None:
         self._peer_data[OAUTH_SYNC_CACHE_PEER_KEY] = cache
+
+    def _invalidate_flow_caches(self) -> None:
+        """Clear the cached authorization/invalidation flow UUIDs so they re-resolve."""
+        self._peer_data.set_string(AUTHORIZATION_FLOW_CACHE_PEER_KEY, "")
+        self._peer_data.set_string(INVALIDATION_FLOW_CACHE_PEER_KEY, "")
 
     def _publish_provider_info(
         self, relation: "ops.Relation", slug: str, scopes: list[str]
@@ -220,14 +236,30 @@ class OauthReconciler:
         provider_pk = entry.get("provider_pk")
         application = None
 
-        if provider_pk is not None and entry.get("slug"):
+        cache_is_trusted = provider_pk is not None and bool(entry.get("slug"))
+        if cache_is_trusted:
             provider_pk = int(provider_pk)
             application = self._api.get_application(slug)
             if application is not None and int(application.get("provider", -1)) != provider_pk:
                 raise AuthentikConflictError(
                     f"Cached application {slug!r} references a different provider"
                 )
-        else:
+            # A provider deleted out-of-band leaves the cache pointing at a dead pk;
+            # discard the stale entry and rediscover instead of PUT-ing a 404 forever.
+            if self._api.get_oauth_provider(provider_pk) is None:
+                logger.warning(
+                    "Cached OAuth provider %s for relation %s no longer exists; rediscovering",
+                    provider_pk,
+                    relation.id,
+                )
+                cache.pop(relation_key, None)
+                self._save_cache(cache)
+                cache_is_trusted = False
+                slug = managed_slug
+                provider_pk = None
+                application = None
+
+        if not cache_is_trusted:
             application = self._api.get_application(managed_slug)
             if application is not None:
                 slug = managed_slug
@@ -296,20 +328,14 @@ class OauthReconciler:
             entry = cache[relation_key]
             slug = entry.get("slug")
             if slug:
-                if not self._api.delete_application(slug):
-                    raise AuthentikTransientError(
-                        f"Deletion of application {slug!r} was not confirmed"
-                    )
+                self._api.delete_application(slug)
                 entry.pop("slug", None)
                 entry.pop("config_hash", None)
                 self._save_cache(cache)
 
             provider_pk = entry.get("provider_pk")
             if provider_pk is not None:
-                if not self._api.delete_oauth_provider(int(provider_pk)):
-                    raise AuthentikTransientError(
-                        f"Deletion of provider {provider_pk!r} was not confirmed"
-                    )
+                self._api.delete_oauth_provider(int(provider_pk))
                 entry.pop("provider_pk", None)
                 self._save_cache(cache)
 

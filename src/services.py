@@ -5,6 +5,7 @@
 
 import copy
 import logging
+from functools import cached_property
 
 from ops import Container, ModelError, Unit
 from ops.pebble import CheckStatus
@@ -78,9 +79,9 @@ class WorkloadService:
         self._container: Container = unit.get_container(WORKLOAD_CONTAINER)
         self._cli = CommandLine(self._container)
 
-    @property
+    @cached_property
     def version(self) -> str:
-        """The workload version via pebble exec."""
+        """The workload version via pebble exec (cached for the unit's lifetime)."""
         return self._cli.get_version()
 
     def set_version(self) -> None:

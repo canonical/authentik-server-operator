@@ -6,7 +6,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ops import StatusBase, pebble, testing
+from ops import ModelError, SecretNotFoundError, StatusBase, pebble, testing
 from ops.testing import ActionFailed
 from pytest_mock import MockerFixture
 from scenario.errors import UncaughtCharmError
@@ -14,6 +14,7 @@ from unit.conftest import create_state
 
 from constants import (
     HEALTH_CHECK_URL,
+    OAUTH_RELATION_NAME,
     PEBBLE_READY_CHECK_NAME,
     WORKLOAD_CONTAINER,
     WORKLOAD_SERVICE,
@@ -925,3 +926,51 @@ class TestCharmActions:
         with pytest.raises(ActionFailed) as exc_info:
             context.run(context.on.action("create-recovery-link"), state)
         assert "Failed to create recovery link" in str(exc_info.value)
+
+
+class TestOauthCredentials:
+    def test_transient_secret_read_error_raises_instead_of_rotating(
+        self,
+        context: testing.Context,
+        container: testing.Container,
+        mocker: MockerFixture,
+    ) -> None:
+        """A transient Juju secret-read error must not silently rotate OAuth credentials."""
+        oauth_relation = testing.Relation(
+            endpoint=OAUTH_RELATION_NAME,
+            interface="oauth",
+            local_app_data={"client_id": "existing-id", "client_secret_id": "secret-xyz"},
+        )
+        state = testing.State(leader=True, relations={oauth_relation}, containers={container})
+
+        with context(context.on.update_status(), state) as manager:
+            charm = manager.charm
+            relation = charm.model.get_relation(OAUTH_RELATION_NAME)
+            mocker.patch.object(
+                charm.model, "get_secret", side_effect=ModelError("controller unavailable")
+            )
+            with pytest.raises(AuthentikTransientError):
+                charm._get_or_generate_credentials(relation)
+
+    def test_missing_client_secret_regenerates_credentials(
+        self,
+        context: testing.Context,
+        container: testing.Container,
+        mocker: MockerFixture,
+    ) -> None:
+        """A genuinely missing client secret regenerates credentials rather than failing."""
+        oauth_relation = testing.Relation(
+            endpoint=OAUTH_RELATION_NAME,
+            interface="oauth",
+            local_app_data={"client_id": "existing-id", "client_secret_id": "secret-xyz"},
+        )
+        state = testing.State(leader=True, relations={oauth_relation}, containers={container})
+
+        with context(context.on.update_status(), state) as manager:
+            charm = manager.charm
+            relation = charm.model.get_relation(OAUTH_RELATION_NAME)
+            mocker.patch.object(charm.model, "get_secret", side_effect=SecretNotFoundError())
+            _, client_secret, is_new = charm._get_or_generate_credentials(relation)
+
+        assert is_new is True
+        assert client_secret
