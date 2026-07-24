@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.2](https://github.com/canonical/authentik-server-operator/compare/v1.2.1...v1.2.2) (2026-07-24)
+
+
+### Bug Fixes
+
+* report the Authentik workload version, not Django's ([fe8fc57](https://github.com/canonical/authentik-server-operator/commit/fe8fc57b195b23d2e589c13ecfb57033d8ae1b6c))
+* report the Authentik workload version, not Django's ([#71](https://github.com/canonical/authentik-server-operator/issues/71)) ([11b7975](https://github.com/canonical/authentik-server-operator/commit/11b79758566a1d0ba812d9a714aed977161aca9a))
+
 ## [1.2.1](https://github.com/canonical/authentik-server-operator/compare/v1.2.0...v1.2.1) (2026-07-24)
 
 
