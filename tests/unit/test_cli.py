@@ -30,26 +30,14 @@ class TestCommandLine:
         version = cli.get_version()
         assert version == "2026.3.1"
         mocked_container.exec.assert_called_once_with(
-            ["/lifecycle/ak", "version"], environment=None, service_context=None
+            [
+                "/ak-root/.venv/bin/python",
+                "-c",
+                "from authentik import VERSION; print(VERSION)",
+            ],
+            environment={"PYTHONPATH": "/"},
+            service_context=None,
         )
-
-    def test_get_version_fallback_success(
-        self, cli: CommandLine, mocked_container: MagicMock
-    ) -> None:
-        exec_error = ExecError(
-            command=["/lifecycle/ak", "version"], exit_code=1, stdout="", stderr="error"
-        )
-        exec_mock_error = MagicMock()
-        exec_mock_error.wait_output.side_effect = exec_error
-
-        exec_mock_success = MagicMock()
-        exec_mock_success.wait_output.return_value = ("2026.3.2-fallback\n", "")
-
-        mocked_container.exec.side_effect = [exec_mock_error, exec_mock_success]
-
-        version = cli.get_version()
-        assert version == "2026.3.2-fallback"
-        assert mocked_container.exec.call_count == 2
 
     def test_get_version_failure_returns_empty_string(
         self, cli: CommandLine, mocked_container: MagicMock
