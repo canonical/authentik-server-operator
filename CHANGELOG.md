@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/canonical/authentik-server-operator/compare/v1.2.0...v1.2.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* harden Authentik API interaction (resilience, caching) ([f8255f7](https://github.com/canonical/authentik-server-operator/commit/f8255f71deeeb70b63871624361ddc636c0927d0))
+
 ## [1.2.0](https://github.com/canonical/authentik-server-operator/compare/v1.1.0...v1.2.0) (2026-07-23)
 
 
