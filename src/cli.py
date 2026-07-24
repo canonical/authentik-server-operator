@@ -32,31 +32,23 @@ class CommandLine:
         Returns:
             The version string, or an empty string if it could not be determined.
         """
-        # Run `/lifecycle/ak version` to fetch the Authentik version
+        # `/lifecycle/ak version` runs Django's `manage version` (the framework
+        # version, e.g. 5.2.x), not Authentik's, so read Authentik's VERSION directly.
+        # An absolute interpreter path is used so this does not depend on the service
+        # PATH (no service_context needed).
         try:
-            stdout, _ = self._run_cmd(["/lifecycle/ak", "version"])
+            stdout, _ = self._run_cmd(
+                [
+                    "/ak-root/.venv/bin/python",
+                    "-c",
+                    "from authentik import VERSION; print(VERSION)",
+                ],
+                environment={"PYTHONPATH": "/"},
+            )
             return stdout.strip()
         except Exception as err:
-            logger.warning(
-                "Failed to fetch the service version via CLI: %s. Falling back to python import check.",
-                err,
-            )
-            # Fallback to the Python import method if the CLI version command fails
-            try:
-                stdout, _ = self._run_cmd(
-                    [
-                        "/ak-root/.venv/bin/python",
-                        "-c",
-                        "from authentik import VERSION; print(VERSION)",
-                    ],
-                    environment={"PYTHONPATH": "/"},
-                )
-                return stdout.strip()
-            except Exception as fallback_err:
-                logger.error(
-                    "Failed to fetch the service version via Python fallback: %s", fallback_err
-                )
-                return ""
+            logger.error("Failed to fetch the Authentik version: %s", err)
+            return ""
 
     def check_migrations(self) -> None:
         """Check the status of database migrations.
