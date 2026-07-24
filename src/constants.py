@@ -31,7 +31,6 @@ BOOTSTRAP_TOKEN_KEY = "bootstrap-token"
 BOOTSTRAP_PASSWORD_KEY = "bootstrap-password"
 
 SECRETS_LABEL = "authentik-server-secrets"
-SECRETS_PEER_KEY = "secrets_id"
 
 OAUTH_SYNC_CACHE_PEER_KEY = "oauth_sync_cache"
 OAUTH_MANAGED_NAMESPACE = "juju"

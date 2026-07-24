@@ -10,8 +10,9 @@ from pytest_mock import MockerFixture
 from requests import Response
 from requests.exceptions import ConnectionError
 
-from authentik_api import AuthentikAPI
+from authentik_api import PAGINATION_MAX_PAGES, PAGINATION_PAGE_SIZE, AuthentikAPI
 from exceptions import (
+    AuthentikAPIError,
     AuthentikAuthenticationError,
     AuthentikAuthorizationError,
     AuthentikConflictError,
@@ -137,14 +138,14 @@ def test_is_service_available_false_on_any_api_error(status: int) -> None:
     api = AuthentikAPI("token")
     api.session.request = MagicMock(return_value=response(status))
 
-    assert api.is_service_available() is False
+    assert api.is_service_available is False
 
 
 def test_is_service_available_true_when_reachable() -> None:
     api = AuthentikAPI("token")
     api.session.request = MagicMock(return_value=response(200, '{"results": []}'))
 
-    assert api.is_service_available() is True
+    assert api.is_service_available is True
 
 
 def test_update_application_uses_patch_to_preserve_unmanaged_fields() -> None:
@@ -163,7 +164,7 @@ def test_is_service_available_probe_limits_page_size() -> None:
     api = AuthentikAPI("token")
     api.session.request = MagicMock(return_value=response(200, '{"results": []}'))
 
-    assert api.is_service_available() is True
+    assert api.is_service_available is True
     assert api.session.request.call_args.kwargs["params"] == {"page_size": 1}
 
 
@@ -180,3 +181,38 @@ def test_delete_oauth_provider_treats_missing_as_success() -> None:
     api.session.request = MagicMock(return_value=response(404))
 
     assert api.delete_oauth_provider(42) is None
+
+
+def test_get_paginated_sends_bounded_page_size() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(
+        return_value=response(200, '{"results": [{"pk": 1}], "pagination": {"next": 0}}')
+    )
+
+    results = list(api._get_paginated("http://authentik.test/api/"))
+
+    assert results == [{"pk": 1}]
+    assert api.session.request.call_args.kwargs["params"]["page_size"] == PAGINATION_PAGE_SIZE
+
+
+def test_get_paginated_stops_at_max_pages() -> None:
+    api = AuthentikAPI("token")
+    # Every page points at another page, so only the cap terminates the loop.
+    api.session.request = MagicMock(
+        return_value=response(200, '{"results": [{"pk": 1}], "pagination": {"next": 2}}')
+    )
+
+    with pytest.raises(AuthentikAPIError, match="exceeded the maximum"):
+        list(api._get_paginated("http://authentik.test/api/"))
+
+    assert api.session.request.call_count == PAGINATION_MAX_PAGES
+
+
+def test_is_service_available_caches_successful_probe() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(200))
+
+    assert api.is_service_available is True
+    assert api.is_service_available is True
+
+    api.session.request.assert_called_once()

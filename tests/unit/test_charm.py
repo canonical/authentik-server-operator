@@ -212,7 +212,7 @@ class TestHolisticHandler:
     ) -> None:
         oauth_relation = testing.Relation("oauth", remote_app_name="client")
         api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
-        api.is_service_available.return_value = True
+        api.is_service_available = True
         api.get_authorization_flow_uuid.side_effect = AuthentikTransientError(
             "retry budget exhausted"
         )
@@ -245,7 +245,7 @@ class TestHolisticHandler:
         """Server-info stays unpublished while the workload API is unavailable."""
         mocker.patch("charm.AuthentikServerCharm._ensure_oauth_relation", return_value=True)
         api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
-        api.is_service_available.return_value = False
+        api.is_service_available = False
         publish = mocker.patch("charm.AuthentikServerInfoProvider.update_relations_app_data")
         state = create_state(
             relations=[
@@ -277,7 +277,7 @@ class TestHolisticHandler:
         """Server-info is published once the workload API becomes reachable."""
         mocker.patch("charm.AuthentikServerCharm._ensure_oauth_relation", return_value=True)
         api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
-        api.is_service_available.return_value = True
+        api.is_service_available = True
         publish = mocker.patch("charm.AuthentikServerInfoProvider.update_relations_app_data")
         state = create_state(
             relations=[
@@ -551,7 +551,7 @@ class TestTraefikRouteEvents:
         mocker: MockerFixture,
     ) -> None:
         api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
-        api.is_service_available.return_value = True
+        api.is_service_available = True
         state = create_state(
             relations=[
                 db_relation,

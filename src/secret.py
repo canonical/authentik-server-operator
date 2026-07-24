@@ -3,14 +3,13 @@
 
 """Helper class to manage the charm's secrets."""
 
-from ops import Model, Relation, SecretNotFoundError
+from ops import Model, ModelError
 
 from constants import (
     BOOTSTRAP_PASSWORD_KEY,
     BOOTSTRAP_TOKEN_KEY,
     SECRET_KEY_KEY,
     SECRETS_LABEL,
-    SECRETS_PEER_KEY,
 )
 from env_vars import EnvVars
 from exceptions import SecretError
@@ -20,35 +19,42 @@ class Secrets:
     """An abstraction of the charm secret management.
 
     All three credential values (secret-key, bootstrap-token, bootstrap-password)
-    are stored in a single Juju secret.  The secret ID is persisted in the peer
-    app databag under ``SECRETS_PEER_KEY`` so that every unit can retrieve it
-    without relying on label lookups.
+    are stored in a single application-owned Juju secret, resolved by its
+    deterministic label ``SECRETS_LABEL``. The label is identical on every unit,
+    so any unit can retrieve the secret without a peer-relation pointer.
     """
 
-    def __init__(self, model: Model, peer_relation: Relation | None) -> None:
+    def __init__(self, model: Model) -> None:
         self._model = model
-        self._peer_relation = peer_relation
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    @property
-    def _secret_id(self) -> str | None:
-        """The Juju secret ID stored in the peer app databag, or None."""
-        if self._peer_relation is None:
+    def _get_secret_by_label(self):
+        """Return the labeled Juju secret, or None if it cannot be resolved.
+
+        A missing secret (``SecretNotFoundError``) or a transient controller error
+        (``ModelError``) both yield None so this best-effort lookup never crashes a
+        status/reconcile pass; it simply re-resolves on the next event.
+        """
+        try:
+            return self._model.get_secret(label=SECRETS_LABEL)
+        except ModelError:
+            # SecretNotFoundError is a ModelError subclass; both are treated as
+            # "not resolvable this pass".
             return None
-        return self._peer_relation.data[self._model.app].get(SECRETS_PEER_KEY)
 
     def _get_content(self) -> dict[str, str] | None:
-        """Fetch the secret content, or None if the secret does not exist yet."""
-        secret_id = self._secret_id
-        if not secret_id:
+        """Fetch the secret content, or None if the secret does not exist yet.
+
+        Resolves the secret solely by its deterministic label, so any unit can read
+        it regardless of which unit created it and without a peer-relation pointer.
+        """
+        secret = self._get_secret_by_label()
+        if secret is None:
             return None
-        try:
-            return self._model.get_secret(id=secret_id).get_content(refresh=True)
-        except SecretNotFoundError:
-            return None
+        return secret.get_content(refresh=True)
 
     # ------------------------------------------------------------------
     # Public API
@@ -60,27 +66,33 @@ class Secrets:
         bootstrap_token: str,
         bootstrap_password: str,
     ) -> None:
-        """Create the consolidated secret and record its ID in the peer databag.
+        """Create the consolidated secret (leader only), idempotent by label.
 
-        Idempotent: does nothing if the secret already exists.
+        Get-or-create keyed on the deterministic label: if the labeled Juju secret
+        already exists it is adopted and left untouched, so a pointer/secret desync
+        after unit recreation or an interrupted hook cannot trigger an "already
+        exists" ModelError and crash-loop the hook.
 
         Args:
             secret_key: Value for ``AUTHENTIK_SECRET_KEY``.
             bootstrap_token: Value for ``AUTHENTIK_BOOTSTRAP_TOKEN``.
             bootstrap_password: Value for ``AUTHENTIK_BOOTSTRAP_PASSWORD``.
         """
-        if self._secret_id is not None:
+        if self._get_secret_by_label() is not None:
             return
-        secret = self._model.app.add_secret(
-            {
-                SECRET_KEY_KEY: secret_key,
-                BOOTSTRAP_TOKEN_KEY: bootstrap_token,
-                BOOTSTRAP_PASSWORD_KEY: bootstrap_password,
-            },
-            label=SECRETS_LABEL,
-        )
-        if self._peer_relation is not None:
-            self._peer_relation.data[self._model.app][SECRETS_PEER_KEY] = secret.id
+        content = {
+            SECRET_KEY_KEY: secret_key,
+            BOOTSTRAP_TOKEN_KEY: bootstrap_token,
+            BOOTSTRAP_PASSWORD_KEY: bootstrap_password,
+        }
+        try:
+            self._model.app.add_secret(content, label=SECRETS_LABEL)
+        except ModelError:
+            # The labeled secret may have appeared between the lookup above and
+            # add_secret (concurrent/interrupted hook). Adopt it rather than
+            # propagating an "already exists" model error.
+            if self._get_secret_by_label() is None:
+                raise
 
     def is_ready(self) -> bool:
         """Return True when the secret exists and all keys are populated."""
