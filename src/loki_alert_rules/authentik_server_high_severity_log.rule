@@ -1,7 +1,7 @@
 groups:
-- name: AuthentikServerErrors
+- name: AuthentikServerHighSeverityLog
   rules:
-  - alert: HighFrequencyAuthentikServerErrors
+  - alert: HighFrequencyHighSeverityLog
     expr: sum by(level) (count_over_time({%%juju_topology%%} | json | __error__ != "JSONParserErr" | level =~ `error|fatal|critical` [5m])) > 100
     labels:
       severity: error

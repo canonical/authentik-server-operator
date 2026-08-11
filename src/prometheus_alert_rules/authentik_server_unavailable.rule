@@ -2,14 +2,14 @@ groups:
 - name: AuthentikServerUnavailable
   rules:
   - alert: AuthentikServerUnavailable-multiple
-    expr: sum(up) / count(up) < 0.7
+    expr: sum by (juju_model, juju_application) (up) / count by (juju_model, juju_application) (up) < 0.7
     for: 5m
     labels:
       severity: error
     annotations:
       summary: "30% of units of {{ $labels.juju_application }} in model {{ $labels.juju_model }} are down"
   - alert: AuthentikServerUnavailable-all
-    expr: sum(up) == 0
+    expr: sum by (juju_model, juju_application) (up) == 0
     for: 5m
     labels:
       severity: fatal

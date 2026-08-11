@@ -21,24 +21,28 @@ integration completes without errors and Authentik logs are forwarded to Loki.
 ### Requirement: Charm must expose Prometheus metrics via MetricsEndpointProvider
 
 `charm.py` MUST instantiate `MetricsEndpointProvider` from
-`charms.prometheus_k8s.v0.prometheus_scrape` targeting port `SERVER_PORT` (9000)
-on all units (`*:{SERVER_PORT}`). The relation name is
+`charms.prometheus_k8s.v0.prometheus_scrape` targeting port `METRICS_PORT` (9300)
+on all units (`*:{METRICS_PORT}`) with the default `/metrics` path. The relation name is
 `PROMETHEUS_RELATION_NAME = "metrics-endpoint"`.
 
-Authentik exposes `/-/metrics/` on the main HTTP port.
+Authentik serves its Prometheus registry on the dedicated metrics listener
+(`listen.metrics`, `[::]:9300`), not on the main HTTP port — the public listener hard-404s
+`/-/metrics/`. The port MUST NOT be opened with `unit.open_port()`: `prometheus_scrape`
+publishes the pod IP, so Prometheus reaches it pod-to-pod and opening it would expose
+unauthenticated metrics through the Kubernetes Service.
 
 #### Scenario: Prometheus metrics integration completes without error
 
 Given the charm is deployed, when
 `juju integrate authentik-server:metrics-endpoint prometheus-k8s:metrics-endpoint`
-is run, then Prometheus can scrape metrics from `/-/metrics/` on port 9000.
+is run, then Prometheus can scrape metrics from `/metrics` on port 9300.
 
 ### Requirement: Charm must provide Grafana dashboard via GrafanaDashboardProvider
 
 `charm.py` MUST instantiate `GrafanaDashboardProvider` from
 `charms.grafana_k8s.v0.grafana_dashboard` bound to
 `GRAFANA_RELATION_NAME = "grafana-dashboard"`.
-A placeholder dashboard template MUST exist at
+A dashboard template MUST exist at
 `src/grafana_dashboards/authentik-server.json.tmpl`.
 
 #### Scenario: Grafana dashboard integration completes without error
@@ -81,15 +85,18 @@ then the integration completes and the OTLP endpoint env var is passed to the wo
 
 The following alert rule files MUST exist in the charm source:
 
-- `src/prometheus_alert_rules/authentik_server.rule` — fires `AuthentikServerUnavailable`
-  when the charm target is down for 5 minutes.
-- `src/loki_alert_rules/authentik_server.rule` — fires `AuthentikServerErrors` when
-  error-rate log entries are detected.
+- `src/prometheus_alert_rules/authentik_server_unavailable.rule` — fires
+  `AuthentikServerUnavailable-multiple` when more than 30% of units are down for 5 minutes
+  and `AuthentikServerUnavailable-all` when every unit is down for 5 minutes.
+- `src/prometheus_alert_rules/authentik_server_http_errors.rule` — fires
+  `AuthentikServerHigh5xxRate` when more than 5% of HTTP responses are 5xx for 10 minutes.
+- `src/loki_alert_rules/authentik_server_high_severity_log.rule` — fires
+  `HighFrequencyHighSeverityLog` when error-or-above log entries exceed 100 in 5 minutes.
 
 #### Scenario: Alert rule files are present in the charm
 
 Given the charm is packed with `charmcraft pack`, when the resulting archive is
-inspected, then both alert rule files are present at their expected paths.
+inspected, then all alert rule files are present at their expected paths.
 
 ### Requirement: Observability relation name constants must be defined in src/constants.py
 
