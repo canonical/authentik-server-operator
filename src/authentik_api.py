@@ -5,6 +5,7 @@
 
 import logging
 import time
+from functools import cached_property
 from typing import Iterator
 from urllib.parse import parse_qs, urlparse
 
@@ -28,7 +29,10 @@ logger = logging.getLogger(__name__)
 REQUEST_TIMEOUT_SECONDS = 5
 REQUEST_MAX_ATTEMPTS = 3
 REQUEST_RETRY_BACKOFF_SECONDS = 0.25
+REQUEST_RETRY_BACKOFF_MAX_SECONDS = 2
 RETRYABLE_SERVER_STATUSES = frozenset({500, 502, 503, 504})
+PAGINATION_PAGE_SIZE = 100
+PAGINATION_MAX_PAGES = 1000
 
 
 class AuthentikAPI:
@@ -61,7 +65,9 @@ class AuthentikAPI:
         attempts = REQUEST_MAX_ATTEMPTS if retry else 1
         for attempt in tenacity.Retrying(
             stop=tenacity.stop_after_attempt(attempts),
-            wait=tenacity.wait_exponential(multiplier=REQUEST_RETRY_BACKOFF_SECONDS),
+            wait=tenacity.wait_exponential(
+                multiplier=REQUEST_RETRY_BACKOFF_SECONDS, max=REQUEST_RETRY_BACKOFF_MAX_SECONDS
+            ),
             retry=tenacity.retry_if_exception_type(AuthentikTransientError),
             reraise=True,
             sleep=time.sleep,
@@ -108,11 +114,16 @@ class AuthentikAPI:
             )
 
     def _get_paginated(self, url: str, params: dict | None = None) -> Iterator[dict]:
-        """Fetch all results from a paginated API endpoint."""
+        """Fetch all results from a paginated API endpoint.
+
+        Requests a bounded ``page_size`` and stops after ``PAGINATION_MAX_PAGES`` to
+        guard against an unbounded or self-referential pagination loop.
+        """
         current_params = (params or {}).copy()
         current_params.setdefault("page", 1)
+        current_params.setdefault("page_size", PAGINATION_PAGE_SIZE)
 
-        while True:
+        for _ in range(PAGINATION_MAX_PAGES):
             data = self._request("GET", url, params=current_params).json()
             yield from data.get("results", [])
 
@@ -122,7 +133,7 @@ class AuthentikAPI:
                 if next_page is not None and next_page > 0:
                     current_params["page"] = next_page
                     continue
-                break
+                return
 
             next_url = data.get("next")
             if isinstance(next_url, str):
@@ -130,14 +141,22 @@ class AuthentikAPI:
                 if page_value:
                     current_params["page"] = int(page_value[0])
                     continue
-            break
+            return
 
+        raise AuthentikAPIError(
+            f"Pagination for {url} exceeded the maximum of {PAGINATION_MAX_PAGES} pages"
+        )
+
+    @cached_property
     def is_service_available(self) -> bool:
-        """Return whether the service can answer an authenticated API request.
+        """Whether the service can answer an authenticated API request.
 
         Used as a readiness probe: during Authentik first-boot the API can reject
         the bootstrap credentials with 401/403 (or 404/transient) before the token
         is registered, so any typed API error means "not ready yet", not a crash.
+
+        Cached per instance so repeated readiness checks within a single hook
+        (one client per hook) do not re-issue the request.
         """
         url = f"{self.base_url}/api/v3/flows/instances/"
         try:

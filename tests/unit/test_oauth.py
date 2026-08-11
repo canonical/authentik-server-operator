@@ -32,7 +32,7 @@ def mock_authentik_api(mocker: MockerFixture):
     mock_api_instance = mock_api_class.return_value
 
     # Setup standard mocked responses
-    mock_api_instance.is_service_available.return_value = True
+    mock_api_instance.is_service_available = True
     mock_api_instance.get_authorization_flow_uuid.return_value = "test-flow-uuid"
     mock_api_instance.get_invalidation_flow_uuid.return_value = "test-invalidation-flow-uuid"
     mock_api_instance.get_property_mappings.return_value = ["mapping-1", "mapping-2"]
@@ -646,13 +646,13 @@ def test_active_relation_rejects_legacy_application_with_unexpected_provider(
     api.update_oauth_provider.assert_not_called()
 
 
-def test_provider_creation_is_persisted_before_later_update_failure(
+def test_provider_discovery_is_persisted_before_later_update_failure(
     mocker: MockerFixture,
 ) -> None:
     api = MagicMock()
     api.get_application.side_effect = [None, None]
-    api.find_oauth_provider.return_value = None
-    api.create_oauth_provider.return_value = 123
+    # An existing provider is discovered (not freshly created), so the update runs.
+    api.find_oauth_provider.return_value = {"pk": 123}
     api.update_oauth_provider.side_effect = AuthentikTransientError("update failed")
     peer = FakePeerData()
     reconciler = make_reconciler(mocker, api, peer)
@@ -664,7 +664,27 @@ def test_provider_creation_is_persisted_before_later_update_failure(
     assert partial["provider_pk"] == 123
     assert partial["slug"] == reconciler._managed_identifier(7)
     assert "config_hash" not in partial
+    api.create_oauth_provider.assert_not_called()
     api.create_application.assert_not_called()
+
+
+def test_freshly_created_provider_skips_redundant_update(
+    mocker: MockerFixture,
+) -> None:
+    api = MagicMock()
+    api.get_application.side_effect = [None, None]
+    api.find_oauth_provider.return_value = None
+    api.create_oauth_provider.return_value = 123
+    peer = FakePeerData()
+    reconciler = make_reconciler(mocker, api, peer)
+
+    slug, provider_pk = sync_objects(reconciler, relation(), {})
+
+    assert provider_pk == 123
+    api.create_oauth_provider.assert_called_once()
+    # The create call already persisted every field the update would set.
+    api.update_oauth_provider.assert_not_called()
+    api.create_application.assert_called_once()
 
 
 def test_application_update_failure_leaves_unsynchronized_partial_cache(
@@ -772,7 +792,10 @@ def test_stale_cached_provider_is_rediscovered_after_external_deletion(
     api.get_oauth_provider.assert_called_once_with(123)
     api.create_oauth_provider.assert_called_once()
     assert provider_pk == 456
-    assert api.update_oauth_provider.call_args.kwargs["provider_pk"] == 456
+    # The provider was recreated, so the redundant update is skipped and the new
+    # pk is wired into the application instead.
+    api.update_oauth_provider.assert_not_called()
+    assert api.create_application.call_args.kwargs["provider_pk"] == 456
     api.create_application.assert_called_once()
     assert peer.data["oauth_sync_cache"]["7"]["provider_pk"] == 456
 

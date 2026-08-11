@@ -235,6 +235,7 @@ class OauthReconciler:
         slug = entry.get("slug") or managed_slug
         provider_pk = entry.get("provider_pk")
         application = None
+        provider_created = False
 
         cache_is_trusted = provider_pk is not None and bool(entry.get("slug"))
         if cache_is_trusted:
@@ -291,18 +292,22 @@ class OauthReconciler:
                             invalidation_flow=invalidation_flow,
                             property_mappings=property_mappings,
                         )
+                        provider_created = True
             self._persist_partial_state(cache, relation.id, slug, int(provider_pk))
 
-        self._api.update_oauth_provider(
-            provider_pk=int(provider_pk),
-            name=provider_name,
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uris=redirect_uri,
-            authorization_flow=authorization_flow,
-            invalidation_flow=invalidation_flow,
-            property_mappings=property_mappings,
-        )
+        # A freshly created provider already persisted every field this update would
+        # set (identical payload), so skip the redundant PUT.
+        if not provider_created:
+            self._api.update_oauth_provider(
+                provider_pk=int(provider_pk),
+                name=provider_name,
+                client_id=client_id,
+                client_secret=client_secret,
+                redirect_uris=redirect_uri,
+                authorization_flow=authorization_flow,
+                invalidation_flow=invalidation_flow,
+                property_mappings=property_mappings,
+            )
         if application is None:
             self._api.create_application(
                 name=provider_name, slug=slug, provider_pk=int(provider_pk)

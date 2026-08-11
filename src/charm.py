@@ -94,7 +94,6 @@ class AuthentikServerCharm(ops.CharmBase):
 
     def __init__(self, framework: ops.Framework) -> None:
         super().__init__(framework)
-
         self._container = self.unit.get_container(WORKLOAD_CONTAINER)
         self._pebble = PebbleService(self.unit)
         self._workload_service = WorkloadService(self.unit)
@@ -141,7 +140,7 @@ class AuthentikServerCharm(ops.CharmBase):
             self, CERTIFICATE_TRANSFER_INTEGRATION_NAME
         )
 
-        self._secrets = Secrets(self.model, self.model.get_relation(PEER_RELATION))
+        self._secrets = Secrets(self.model)
 
         self.resources_patch = KubernetesComputeResourcesPatch(
             self,
@@ -377,7 +376,7 @@ class AuthentikServerCharm(ops.CharmBase):
             return True
 
         api = self._authentik_api
-        if not api.is_service_available():
+        if not api.is_service_available:
             logger.info("Authentik API is not available yet for server-info publication")
             return True
 
@@ -451,7 +450,7 @@ class AuthentikServerCharm(ops.CharmBase):
             return True
 
         api = self._authentik_api
-        if not api.is_service_available():
+        if not api.is_service_available:
             logger.info("Authentik API is not available yet for OAuth reconciliation")
             return True
 
