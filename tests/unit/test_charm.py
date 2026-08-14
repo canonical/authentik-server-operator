@@ -12,6 +12,7 @@ from pytest_mock import MockerFixture
 from scenario.errors import UncaughtCharmError
 from unit.conftest import create_state
 
+from authentik_api import ApiAvailability
 from constants import (
     HEALTH_CHECK_URL,
     OAUTH_RELATION_NAME,
@@ -22,6 +23,7 @@ from constants import (
 from exceptions import (
     AuthentikRequestValidationError,
     AuthentikTransientError,
+    PebbleError,
     SecretError,
     ServiceBackoffError,
     WorkloadNotRunningError,
@@ -294,6 +296,72 @@ class TestHolisticHandler:
 
         publish.assert_called_once()
 
+    def test_rejected_api_token_is_registered_in_the_workload(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        server_info_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        """A token Authentik does not know is pushed into the workload to converge."""
+        mocker.patch("charm.AuthentikServerCharm._ensure_oauth_relation", return_value=True)
+        api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
+        api.availability = ApiAvailability.TOKEN_REJECTED
+        api.is_service_available = False
+        reset = mocker.patch("charm.WorkloadService.reset_api_token")
+        state = create_state(
+            relations=[
+                db_relation,
+                peer_relation,
+                cluster_relation,
+                server_info_relation,
+                traefik_route_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        context.run(context.on.config_changed(), state)
+
+        reset.assert_called_once_with("test-bootstrap-token")
+
+    def test_unavailable_api_does_not_touch_the_api_token(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        server_info_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        """A still-starting API is transient, so the registered token is left alone."""
+        mocker.patch("charm.AuthentikServerCharm._ensure_oauth_relation", return_value=True)
+        api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
+        api.availability = ApiAvailability.UNAVAILABLE
+        api.is_service_available = False
+        reset = mocker.patch("charm.WorkloadService.reset_api_token")
+        state = create_state(
+            relations=[
+                db_relation,
+                peer_relation,
+                cluster_relation,
+                server_info_relation,
+                traefik_route_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        context.run(context.on.config_changed(), state)
+
+        reset.assert_not_called()
+
 
 class TestCollectStatusEvent:
     def test_when_all_conditions_satisfied(
@@ -307,6 +375,36 @@ class TestCollectStatusEvent:
         state_out = context.run(context.on.collect_unit_status(), state)
 
         assert state_out.unit_status == testing.ActiveStatus()
+
+    def test_when_api_token_is_rejected_and_cannot_be_registered(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+        mocker: MockerFixture,
+    ) -> None:
+        """A token Authentik keeps rejecting is reported instead of stalling silently."""
+        api = mocker.patch("charm.AuthentikAPI", autospec=True).return_value
+        api.availability = ApiAvailability.TOKEN_REJECTED
+        api.is_service_available = False
+        mocker.patch(
+            "charm.WorkloadService.reset_api_token", side_effect=PebbleError("exec failed")
+        )
+        state = create_state(
+            relations=[db_relation, peer_relation, cluster_relation, traefik_route_relation],
+            secrets=[authentik_secrets],
+        )
+
+        state_out = context.run(context.on.collect_unit_status(), state)
+
+        assert state_out.unit_status == testing.BlockedStatus(
+            f"Authentik rejected the charm API token, please check the "
+            f"{WORKLOAD_CONTAINER} container logs"
+        )
 
     @pytest.mark.parametrize(
         "condition, condition_value, status, message",

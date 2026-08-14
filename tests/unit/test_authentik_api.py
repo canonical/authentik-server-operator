@@ -10,7 +10,12 @@ from pytest_mock import MockerFixture
 from requests import Response
 from requests.exceptions import ConnectionError
 
-from authentik_api import PAGINATION_MAX_PAGES, PAGINATION_PAGE_SIZE, AuthentikAPI
+from authentik_api import (
+    PAGINATION_MAX_PAGES,
+    PAGINATION_PAGE_SIZE,
+    ApiAvailability,
+    AuthentikAPI,
+)
 from exceptions import (
     AuthentikAPIError,
     AuthentikAuthenticationError,
@@ -146,6 +151,34 @@ def test_is_service_available_true_when_reachable() -> None:
     api.session.request = MagicMock(return_value=response(200, '{"results": []}'))
 
     assert api.is_service_available is True
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (200, ApiAvailability.AVAILABLE),
+        (401, ApiAvailability.TOKEN_REJECTED),
+        (403, ApiAvailability.TOKEN_REJECTED),
+        (404, ApiAvailability.UNAVAILABLE),
+        (500, ApiAvailability.UNAVAILABLE),
+        (503, ApiAvailability.UNAVAILABLE),
+    ],
+)
+def test_availability_separates_rejected_token_from_unavailable_service(
+    status: int, expected: ApiAvailability
+) -> None:
+    """A rejected token is terminal; anything else is worth retrying."""
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(status, '{"results": []}'))
+
+    assert api.availability is expected
+
+
+def test_availability_reports_unavailable_when_unreachable() -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(side_effect=ConnectionError("refused"))
+
+    assert api.availability is ApiAvailability.UNAVAILABLE
 
 
 def test_update_application_uses_patch_to_preserve_unmanaged_fields() -> None:

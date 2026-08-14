@@ -287,6 +287,13 @@ def mocked_database_resource_is_created(mocker: MockerFixture) -> MagicMock:
 
 @pytest.fixture
 def mocked_secrets_is_ready(mocker: MockerFixture) -> MagicMock:
+    # A ready secret is by definition readable, so stub the accessors too: charm code
+    # that consumes them must not trip over the absent Juju secret behind this mock.
+    mocker.patch(
+        "charm.Secrets.bootstrap_token",
+        new_callable=PropertyMock,
+        return_value="test-bootstrap-token",
+    )
     return mocker.patch("charm.Secrets.is_ready", return_value=True)
 
 

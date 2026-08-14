@@ -14,6 +14,28 @@ from exceptions import DatabaseConnectionError, MigrationFailedError, MigrationP
 
 logger = logging.getLogger(__name__)
 
+TOKEN_ENV_VAR = "AK_CHARM_API_TOKEN"
+
+# Executed by `manage shell -c`. Mirrors the token entry of Authentik's
+# `blueprints/system/bootstrap.yaml`, except that it updates an existing token
+# instead of skipping it (the blueprint entry is `state: created`).
+RESET_API_TOKEN_SCRIPT = f"""
+from os import environ
+from authentik.core.models import Token, TokenIntents, User
+user = User.objects.filter(username="{{username}}").first()
+if not user:
+    raise SystemExit("bootstrap admin user not found")
+Token.objects.update_or_create(
+    identifier="{{identifier}}",
+    defaults={{{{
+        "key": environ["{TOKEN_ENV_VAR}"],
+        "user": user,
+        "intent": TokenIntents.INTENT_API,
+        "expiring": False,
+    }}}},
+)
+"""
+
 
 class CommandLine:
     """A class to handle command line interactions with Authentik."""
@@ -104,6 +126,37 @@ class CommandLine:
             raise ValueError(f"Failed to find recovery token path in command output: {stdout}")
 
         return match.group(0)
+
+    def reset_api_token(self, identifier: str, username: str, token: str) -> None:
+        """Register the charm-managed API token for the bootstrap admin.
+
+        Authentik only registers ``AUTHENTIK_BOOTSTRAP_TOKEN`` while bootstrapping a
+        tenant for the first time, so this converges the token on a database that was
+        bootstrapped by an earlier deployment.
+
+        The token value is passed through the environment rather than argv so it does
+        not leak into the container's process list.
+
+        Args:
+            identifier: The identifier of the Authentik token object.
+            username: The username owning the token.
+            token: The token value the charm holds.
+
+        Raises:
+            ExecError: If running the command fails.
+        """
+        self._run_cmd(
+            [
+                "/ak-root/.venv/bin/python",
+                "-m",
+                "manage",
+                "shell",
+                "-c",
+                RESET_API_TOKEN_SCRIPT.format(identifier=identifier, username=username),
+            ],
+            environment={TOKEN_ENV_VAR: token},
+            service_context=WORKLOAD_SERVICE,
+        )
 
     def _run_cmd(
         self,

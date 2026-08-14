@@ -33,6 +33,11 @@ BOOTSTRAP_PASSWORD_KEY = "bootstrap-password"
 
 SECRETS_LABEL = "authentik-server-secrets"
 
+# Identity of the API token Authentik registers from AUTHENTIK_BOOTSTRAP_TOKEN,
+# and of its owning account, as declared in Authentik's system bootstrap blueprint.
+API_TOKEN_IDENTIFIER = "authentik-bootstrap-token"
+BOOTSTRAP_ADMIN_USERNAME = "akadmin"
+
 OAUTH_SYNC_CACHE_PEER_KEY = "oauth_sync_cache"
 OAUTH_MANAGED_NAMESPACE = "juju"
 OAUTH_CACHE_SCHEMA_VERSION = 2
