@@ -56,6 +56,24 @@ class AuthentikWorkerCharm(CharmBase):
             self._on_cluster_changed,
         )
 ```
+
+## Databag contents
+
+The provider application databag carries:
+
+| Field | Description |
+|-------|-------------|
+| `secret_key_secret_id` | ID of the Juju secret holding `secret-key` and `db-password` |
+| `db_host` | Primary database host |
+| `db_port` | Primary database port |
+| `db_user` | Database user |
+| `db_name` | Database name |
+| `db_read_replicas` | Comma-separated `host:port` read replicas, empty when none |
+| `db_use_pgbouncer` | `"true"` when the endpoint is a transaction-pooling PgBouncer |
+| `server_version` | The authentik workload version string |
+
+The database password and the authentik secret key are never written to the
+databag; they are carried by the granted Juju secret instead.
 """
 
 import logging
@@ -74,7 +92,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 LIBID = "810ec184ec9e4c61aa18b3eef8e5e241"
 LIBAPI = 0
-LIBPATCH = 2
+LIBPATCH = 3
 
 PYDEPS = ["pydantic"]
 
@@ -92,6 +110,8 @@ class ProviderData(BaseModel):
     db_port: str
     db_user: str
     db_name: str
+    db_read_replicas: str = ""
+    db_use_pgbouncer: str = "false"
     server_version: str = ""
 
     secret_key: Optional[str] = Field(default=None, exclude=True)
@@ -196,6 +216,8 @@ class AuthentikClusterProvider(Object):
         db_user: str,
         db_password: str,
         db_name: str,
+        db_read_replicas: str = "",
+        db_use_pgbouncer: str = "false",
         server_version: str = "",
     ) -> None:
         """Store the secret key and publish provider data to all related workers.
@@ -212,6 +234,11 @@ class AuthentikClusterProvider(Object):
             db_user: The database user.
             db_password: The database password.
             db_name: The database name.
+            db_read_replicas: Comma-separated "host:port" read replica endpoints,
+                empty when the database has no replicas.
+            db_use_pgbouncer: "true" when the database endpoint is a PgBouncer in
+                transaction pooling mode. Declared on the server and shared so the
+                worker does not need a duplicate config option.
             server_version: The authentik workload version string (e.g. "2026.5.3").
         """
         if not self._charm.unit.is_leader():
@@ -225,6 +252,8 @@ class AuthentikClusterProvider(Object):
             db_port=db_port,
             db_user=db_user,
             db_name=db_name,
+            db_read_replicas=db_read_replicas,
+            db_use_pgbouncer=db_use_pgbouncer,
         )
         for relation in self._charm.model.relations.get(self._relation_name, []):
             secret.grant(relation)
@@ -328,6 +357,13 @@ class AuthentikClusterRequirer(Object):
     def get_database_config(self) -> Optional[dict[str, str]]:
         """Retrieve database configuration from the resolved provider data.
 
+        The ``db-read-replicas`` key holds a comma-separated list of "host:port"
+        read replica endpoints, and is empty when the database has no replicas.
+
+        The ``db-use-pgbouncer`` key is "true" when the endpoint is a PgBouncer in
+        transaction pooling mode. It is declared on the server charm and shared
+        here so the worker never duplicates the option.
+
         Returns None if database configuration is missing.
         """
         data = self.get_provider_data()
@@ -339,6 +375,8 @@ class AuthentikClusterRequirer(Object):
             "db-user": data.db_user,
             "db-password": data.db_password,
             "db-name": data.db_name,
+            "db-read-replicas": data.db_read_replicas,
+            "db-use-pgbouncer": data.db_use_pgbouncer,
         }
 
     def is_ready(self) -> bool:

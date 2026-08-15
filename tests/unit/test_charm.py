@@ -422,6 +422,65 @@ class TestDatabaseEvents:
 
         mocked_holistic_handler.assert_called_once()
 
+    def test_on_read_only_endpoints_changed(
+        self,
+        context: testing.Context,
+        mocked_holistic_handler: MagicMock,
+        db_relation: testing.Relation,
+    ) -> None:
+        """Replica churn must trigger the holistic handler."""
+        replica_relation = testing.Relation(
+            endpoint="pg-database",
+            interface="postgresql_client",
+            remote_app_name="postgresql-k8s",
+            remote_app_data={
+                **db_relation.remote_app_data,
+                "read-only-endpoints": "replica-a:5432",
+            },
+        )
+        state = create_state(relations=[replica_relation])
+
+        context.run(context.on.relation_changed(replica_relation), state)
+
+        mocked_holistic_handler.assert_called_once()
+
+    def test_read_replicas_published_to_cluster_relation(
+        self,
+        context: testing.Context,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        authentik_secrets: testing.Secret,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+    ) -> None:
+        """The primary is filtered out and the remaining replicas are published."""
+        replica_relation = testing.Relation(
+            endpoint="pg-database",
+            interface="postgresql_client",
+            remote_app_name="postgresql-k8s",
+            remote_app_data={
+                "database": "authentik",
+                "endpoints": "test-host:5432",
+                "read-only-endpoints": "test-host:5432,replica-a:5432,replica-b:5432",
+                "username": "test-user",
+                "password": "test-pass",
+            },
+        )
+        state = create_state(
+            relations=[
+                replica_relation,
+                peer_relation,
+                cluster_relation,
+                traefik_route_relation,
+            ],
+            secrets=[authentik_secrets],
+        )
+
+        state_out = context.run(context.on.config_changed(), state)
+
+        rel_out = state_out.get_relation(cluster_relation.id)
+        assert rel_out.local_app_data["db_read_replicas"] == "replica-a:5432,replica-b:5432"
+
     def test_on_database_relation_broken(
         self,
         context: testing.Context,

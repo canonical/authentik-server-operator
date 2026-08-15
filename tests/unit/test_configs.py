@@ -57,3 +57,30 @@ class TestCharmConfig:
     def test_get_missing_config_keys(self, minimal_config: dict) -> None:
         config = CharmConfig(minimal_config)
         assert config.get_missing_config_keys() == []
+
+    def test_use_pgbouncer_value_follows_config(self, minimal_config: dict) -> None:
+        assert CharmConfig(minimal_config).use_pgbouncer_value == "false"
+        cfg = {**minimal_config, "postgresql_use_pgbouncer": True}
+        assert CharmConfig(cfg).use_pgbouncer_value == "true"
+
+    def test_no_conflict_when_pgbouncer_disabled(self, minimal_config: dict) -> None:
+        assert CharmConfig(minimal_config).get_config_conflicts() == []
+
+    def test_conflict_when_pgbouncer_without_disabled_cursors(self, minimal_config: dict) -> None:
+        cfg = {
+            **minimal_config,
+            "postgresql_use_pgbouncer": True,
+            "postgresql_disable_server_side_cursors": False,
+        }
+        conflicts = CharmConfig(cfg).get_config_conflicts()
+
+        assert len(conflicts) == 1
+        assert "postgresql_use_pgbouncer=true" in conflicts[0]
+
+    def test_no_conflict_when_pgbouncer_with_disabled_cursors(self, minimal_config: dict) -> None:
+        cfg = {
+            **minimal_config,
+            "postgresql_use_pgbouncer": True,
+            "postgresql_disable_server_side_cursors": True,
+        }
+        assert CharmConfig(cfg).get_config_conflicts() == []

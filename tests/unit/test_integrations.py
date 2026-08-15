@@ -71,6 +71,72 @@ class TestDatabaseConfig:
             "AUTHENTIK_POSTGRESQL__NAME": "",
         }
 
+    def test_load_no_read_only_endpoints(self, mocked_requirer: MagicMock) -> None:
+        config = DatabaseConfig.load(mocked_requirer)
+        assert config.read_only_endpoints == ()
+        assert not [k for k in config.to_env_vars() if "READ_REPLICAS" in k]
+
+    def test_load_empty_read_only_endpoints(self) -> None:
+        mocked = create_autospec(DatabaseRequires)
+        mocked.relations = [MagicMock(id=1)]
+        mocked.fetch_relation_data.return_value = {
+            1: {"endpoints": "host:5432", "read-only-endpoints": "  ,  "}
+        }
+        config = DatabaseConfig.load(mocked)
+        assert config.read_only_endpoints == ()
+        assert not [k for k in config.to_env_vars() if "READ_REPLICAS" in k]
+
+    def test_load_two_read_replicas(self) -> None:
+        mocked = create_autospec(DatabaseRequires)
+        mocked.relations = [MagicMock(id=1)]
+        mocked.fetch_relation_data.return_value = {
+            1: {
+                "endpoints": "primary:5432",
+                "read-only-endpoints": "replica-a:5432, replica-b:5433",
+            }
+        }
+        config = DatabaseConfig.load(mocked)
+        assert config.read_only_endpoints == ("replica-a:5432", "replica-b:5433")
+        env = config.to_env_vars()
+        assert env["AUTHENTIK_POSTGRESQL__READ_REPLICAS__0__HOST"] == "replica-a"
+        assert env["AUTHENTIK_POSTGRESQL__READ_REPLICAS__0__PORT"] == "5432"
+        assert env["AUTHENTIK_POSTGRESQL__READ_REPLICAS__1__HOST"] == "replica-b"
+        assert env["AUTHENTIK_POSTGRESQL__READ_REPLICAS__1__PORT"] == "5433"
+
+    def test_load_filters_primary_from_read_only_endpoints(self) -> None:
+        mocked = create_autospec(DatabaseRequires)
+        mocked.relations = [MagicMock(id=1)]
+        mocked.fetch_relation_data.return_value = {
+            1: {
+                "endpoints": "primary:5432",
+                "read-only-endpoints": "primary:5432,replica-a:5432",
+            }
+        }
+        config = DatabaseConfig.load(mocked)
+        assert config.read_only_endpoints == ("replica-a:5432",)
+        env = config.to_env_vars()
+        assert env["AUTHENTIK_POSTGRESQL__READ_REPLICAS__0__HOST"] == "replica-a"
+        assert "AUTHENTIK_POSTGRESQL__READ_REPLICAS__1__HOST" not in env
+
+    def test_load_single_unit_postgresql_yields_no_replicas(self) -> None:
+        mocked = create_autospec(DatabaseRequires)
+        mocked.relations = [MagicMock(id=1)]
+        mocked.fetch_relation_data.return_value = {
+            1: {"endpoints": "primary:5432", "read-only-endpoints": "primary:5432"}
+        }
+        config = DatabaseConfig.load(mocked)
+        assert config.read_only_endpoints == ()
+        assert not [k for k in config.to_env_vars() if "READ_REPLICAS" in k]
+
+    def test_to_env_vars_ipv6_replica_splits_on_last_colon(self) -> None:
+        config = DatabaseConfig(host="primary", port="5432", read_only_endpoints=("::1:5433",))
+        env = config.to_env_vars()
+        assert env["AUTHENTIK_POSTGRESQL__READ_REPLICAS__0__HOST"] == "::1"
+        assert env["AUTHENTIK_POSTGRESQL__READ_REPLICAS__0__PORT"] == "5433"
+
+    def test_is_hashable(self) -> None:
+        assert hash(DatabaseConfig(read_only_endpoints=("a:1", "b:2")))
+
 
 class TestTracingData:
     @pytest.fixture
