@@ -181,6 +181,21 @@ resource "juju_integration" "logging_worker" {
   model_uuid = data.juju_model.this.uuid
 }
 
+resource "juju_integration" "grafana_dashboard_worker" {
+  count = var.grafana_dashboard_offer_url != null ? 1 : 0
+
+  application {
+    offer_url = data.juju_offer.grafana_dashboard[0].url
+  }
+
+  application {
+    name     = module.authentik_worker.application.name
+    endpoint = "grafana-dashboard"
+  }
+
+  model_uuid = data.juju_model.this.uuid
+}
+
 # Optional COS (observability) integrations for LDAP Outpost
 resource "juju_integration" "metrics_ldap" {
   count = var.metrics_offer_url != null ? 1 : 0

@@ -21,7 +21,7 @@ variable "authentik_server" {
   type = object({
     name        = optional(string, "authentik-server")
     units       = optional(number, 1)
-    channel     = optional(string, "latest/edge")
+    channel     = optional(string, "latest/stable")
     base        = optional(string, null)
     trust       = optional(bool, true)
     config      = optional(map(string), {})
@@ -37,7 +37,7 @@ variable "authentik_worker" {
   type = object({
     name        = optional(string, "authentik-worker")
     units       = optional(number, 1)
-    channel     = optional(string, "latest/edge")
+    channel     = optional(string, "latest/stable")
     base        = optional(string, null)
     trust       = optional(bool, true)
     config      = optional(map(string), {})
