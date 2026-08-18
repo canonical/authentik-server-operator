@@ -44,6 +44,7 @@ from constants import (
     LOCAL_CHARM_CERTIFICATES_FILE,
     LOCAL_CHARM_CERTIFICATES_PATH,
     LOGGING_RELATION_NAME,
+    METRICS_PORT,
     OAUTH_RELATION_NAME,
     PEBBLE_READY_CHECK_NAME,
     PEER_RELATION,
@@ -122,8 +123,7 @@ class AuthentikServerCharm(ops.CharmBase):
             jobs=[
                 {
                     "job_name": "authentik_server_metrics",
-                    "metrics_path": "/-/metrics/",
-                    "static_configs": [{"targets": [f"*:{HTTP_PORT}"]}],
+                    "static_configs": [{"targets": [f"*:{METRICS_PORT}"]}],
                 }
             ],
         )

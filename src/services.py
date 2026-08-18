@@ -50,6 +50,7 @@ PEBBLE_LAYER_DICT: LayerDict = {
         "alive": {
             "override": "replace",
             "level": "alive",
+            "startup": "enabled",
             # A threshold of 10 attempts (at the standard 10s interval) provides 100 seconds
             # of grace period for database migrations and service warmup during startup,
             # preventing premature container restarts while maintaining reliable deadlock detection.
@@ -61,6 +62,7 @@ PEBBLE_LAYER_DICT: LayerDict = {
         PEBBLE_READY_CHECK_NAME: {
             "override": "replace",
             "level": "ready",
+            "startup": "enabled",
             "timeout": "10s",
             "threshold": 3,
             "http": {

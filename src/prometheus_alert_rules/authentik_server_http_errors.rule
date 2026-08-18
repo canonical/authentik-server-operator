@@ -1,0 +1,14 @@
+groups:
+- name: AuthentikServerHTTPErrors
+  rules:
+  - alert: AuthentikServerHigh5xxRate
+    expr: >-
+      sum by (juju_model, juju_application) (rate(django_http_responses_total_by_status_total{status=~"5.."}[5m]))
+      /
+      sum by (juju_model, juju_application) (rate(django_http_responses_total_by_status_total[5m]))
+      > 0.05
+    for: 10m
+    labels:
+      severity: error
+    annotations:
+      summary: "More than 5% of HTTP responses from {{ $labels.juju_application }} in model {{ $labels.juju_model }} are 5xx"
