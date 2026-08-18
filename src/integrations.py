@@ -39,16 +39,28 @@ class DatabaseConfig:
     user: str = ""
     password: str = ""
     name: str = ""
+    read_only_endpoints: tuple[str, ...] = ()
 
     def to_env_vars(self) -> EnvVars:
-        """Return PostgreSQL connection environment variables."""
-        return {
+        """Return PostgreSQL connection environment variables.
+
+        Read-only endpoints are exposed as contiguous, zero-indexed authentik read
+        replica aliases. Only host and port are emitted; authentik inherits every
+        other setting from the primary connection.
+        """
+        env_vars: dict[str, str | bool] = {
             "AUTHENTIK_POSTGRESQL__HOST": self.host,
             "AUTHENTIK_POSTGRESQL__PORT": self.port,
             "AUTHENTIK_POSTGRESQL__USER": self.user,
             "AUTHENTIK_POSTGRESQL__PASSWORD": self.password,
             "AUTHENTIK_POSTGRESQL__NAME": self.name,
         }
+        for index, endpoint in enumerate(self.read_only_endpoints):
+            # Split on the last colon so IPv6 literals survive.
+            host, _, port = endpoint.rpartition(":")
+            env_vars[f"AUTHENTIK_POSTGRESQL__READ_REPLICAS__{index}__HOST"] = host
+            env_vars[f"AUTHENTIK_POSTGRESQL__READ_REPLICAS__{index}__PORT"] = port
+        return env_vars
 
     @classmethod
     def load(cls, requirer: DatabaseRequires) -> "DatabaseConfig":
@@ -58,13 +70,24 @@ class DatabaseConfig:
         integration_data = requirer.fetch_relation_data()[relations[0].id]
         if "endpoints" not in integration_data:
             return cls()
-        host, port = integration_data["endpoints"].split(":")
+        primary = integration_data["endpoints"]
+        host, port = primary.split(":")
+        # A single-unit PostgreSQL reports the primary in read-only-endpoints too;
+        # aliasing it as a replica would create a pointless alias onto the primary.
+        read_only_endpoints = tuple(
+            stripped
+            for endpoint in integration_data.get("read-only-endpoints", "").split(",")
+            if (stripped := endpoint.strip()) and stripped != primary
+        )
+        if read_only_endpoints:
+            logger.info("Database read replicas discovered: %s", read_only_endpoints)
         return cls(
             host=host,
             port=port,
             user=integration_data.get("username", ""),
             password=integration_data.get("password", ""),
             name=integration_data.get("database", ""),
+            read_only_endpoints=read_only_endpoints,
         )
 
 

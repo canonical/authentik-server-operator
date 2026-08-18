@@ -84,6 +84,24 @@ config:
         recycling of connections, or a low positive integer to limit connection age.
       type: int
       default: 0
+    postgresql_use_pgbouncer:
+      description: |
+        Declare that the pg-database endpoint is a PgBouncer instance running in
+        transaction pooling mode.
+
+        The charm cannot detect this from relation data: PgBouncer presents the
+        same postgresql_client interface as PostgreSQL, so the two are
+        indistinguishable. It has to be declared by the operator.
+
+        This value is shared with authentik-worker over the authentik-cluster
+        relation, so it is configured here only and never duplicated on the
+        worker charm.
+
+        When true, authentik disables server-side cursors, which cannot survive
+        queries being multiplexed across backend connections. The charm blocks
+        if postgresql_disable_server_side_cursors contradicts this.
+      type: boolean
+      default: false
 
 actions:
   get-bootstrap-admin-credentials:

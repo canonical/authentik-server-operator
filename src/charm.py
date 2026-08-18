@@ -152,6 +152,9 @@ class AuthentikServerCharm(ops.CharmBase):
         self.framework.observe(self.on.config_changed, self._on_holistic_handler)
         self.framework.observe(self.database.on.database_created, self._on_holistic_handler)
         self.framework.observe(self.database.on.endpoints_changed, self._on_holistic_handler)
+        self.framework.observe(
+            self.database.on.read_only_endpoints_changed, self._on_holistic_handler
+        )
         self.framework.observe(self.cluster_provider.on.ready, self._on_holistic_handler)
         self.framework.observe(self.server_info_provider.on.ready, self._on_holistic_handler)
         self.framework.observe(self.traefik_route.on.ready, self._on_holistic_handler)
@@ -316,6 +319,8 @@ class AuthentikServerCharm(ops.CharmBase):
                 db_user=db_info.user,
                 db_password=db_info.password,
                 db_name=db_info.name,
+                db_read_replicas=",".join(db_info.read_only_endpoints),
+                db_use_pgbouncer=self._config.use_pgbouncer_value,
             )
         return True
 
@@ -547,6 +552,9 @@ class AuthentikServerCharm(ops.CharmBase):
 
         if configs := self._config.get_missing_config_keys():
             event.add_status(ops.BlockedStatus(f"missing required configuration: {configs}"))
+
+        for conflict in self._config.get_config_conflicts():
+            event.add_status(ops.BlockedStatus(conflict))
 
         self._collect_integrations_status(event)
 

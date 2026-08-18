@@ -12,7 +12,7 @@ This document lists the technical parameters, configuration settings, resource s
 | Component | Replicas | CPU Request / Limit | RAM Request / Limit | Database Connection Pool Policy |
 | :---- | :---: | :---- | :---- | :---- |
 | **Authentik Server** | **3** | 500m / 1000m | 512 MiB / 1 GiB | Direct to PgBouncer Proxy |
-| **Authentik Worker** | **2** | 250m / 500m | 374 MiB / 784 GiB | Direct to PgBouncer Proxy |
+| **Authentik Worker** | **2** | 250m / 500m | 374 MiB / 784 MiB | Direct to PgBouncer Proxy |
 | **LDAP Outpost** | **2** | 100m / 500m | 128 MiB / 256 MiB | Interacts via Server API over HTTP |
 | **PostgreSQL DB** | **Managed HA** | *Defined by DBA Team* | *Defined by DBA Team* | PgBouncer in Transaction Mode |
 

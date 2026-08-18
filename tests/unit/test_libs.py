@@ -73,6 +73,7 @@ class _ClusterProviderCharm(ops.CharmBase):
             db_user="pg-user",
             db_password="pg-password",
             db_name="pg-db",
+            db_read_replicas="replica-a:5432,replica-b:5432",
         )
 
 
@@ -174,6 +175,7 @@ class TestAuthentikClusterProvider:
         assert rel_out.local_app_data.get("db_port") == "5432"
         assert rel_out.local_app_data.get("db_user") == "pg-user"
         assert rel_out.local_app_data.get("db_name") == "pg-db"
+        assert rel_out.local_app_data.get("db_read_replicas") == "replica-a:5432,replica-b:5432"
 
     def test_update_relations_app_data_noop_for_non_leader(self, context: testing.Context) -> None:
         relation = testing.Relation("authentik-cluster")
@@ -372,7 +374,37 @@ class TestAuthentikClusterRequirer:
             "db-user": "pg-user",
             "db-password": "pg-password",
             "db-name": "pg-db",
+            "db-read-replicas": "",
+            "db-use-pgbouncer": "false",
         }
+
+    def test_get_database_config_surfaces_read_replicas(
+        self,
+        context: testing.Context,
+    ) -> None:
+        secret = testing.Secret(
+            tracked_content={
+                "secret-key": "test-secret-key",
+                "db-password": "pg-password",
+            }
+        )
+        relation = testing.Relation(
+            "authentik-cluster",
+            remote_app_data={
+                "secret_key_secret_id": secret.id,
+                "server_version": "2026.1.0",
+                "db_host": "pg-host",
+                "db_port": "5432",
+                "db_user": "pg-user",
+                "db_name": "pg-db",
+                "db_read_replicas": "replica-a:5432,replica-b:5433",
+            },
+        )
+        state = testing.State(leader=False, relations=[relation], secrets=[secret])
+        with context(context.on.relation_changed(relation), state) as mgr:
+            db_config = mgr.charm.cluster.get_database_config()
+        assert db_config is not None
+        assert db_config["db-read-replicas"] == "replica-a:5432,replica-b:5433"
 
 
 # ---------------------------------------------------------------------------
