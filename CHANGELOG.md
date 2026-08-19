@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.3.0](https://github.com/canonical/authentik-server-operator/compare/v1.2.2...v1.3.0) (2026-08-19)
+
+
+### Features
+
+* add working COS metrics, alert rules and dashboard ([105a932](https://github.com/canonical/authentik-server-operator/commit/105a9326cb6193aede2da5304df1f72761b7e1ee))
+
+
+### Bug Fixes
+
+* converge the API token on a pre-existing database ([2c925e9](https://github.com/canonical/authentik-server-operator/commit/2c925e99ea313b0c713c3bd93920a933023efbd1))
+* converge the API token on a pre-existing database ([#88](https://github.com/canonical/authentik-server-operator/issues/88)) ([0d216a1](https://github.com/canonical/authentik-server-operator/commit/0d216a1f8cfb34ce7f33f743f11674df1941dfa1))
+* **deps:** update dependency lightkube to v1 ([f668db9](https://github.com/canonical/authentik-server-operator/commit/f668db973c230e07f74648460d5b73a1e3a648ee))
+* **deps:** update dependency lightkube to v1 ([#85](https://github.com/canonical/authentik-server-operator/issues/85)) ([605962d](https://github.com/canonical/authentik-server-operator/commit/605962d90961b615df9e087346c2a464dfa26f5e))
+* **deps:** update dependency lightkube-models to ~=1.36.3.8 ([1b92ecb](https://github.com/canonical/authentik-server-operator/commit/1b92ecb75f01406676e4836b546ef3ed54f350bf))
+* **deps:** update dependency lightkube-models to ~=1.36.3.8 ([#78](https://github.com/canonical/authentik-server-operator/issues/78)) ([9495078](https://github.com/canonical/authentik-server-operator/commit/94950780200ce610c96192e8eecc51dc944e7986))
+* **deps:** update dependency ops-scenario to &lt;8.8.2 ([3c5b3e8](https://github.com/canonical/authentik-server-operator/commit/3c5b3e8914ded8b3c4e003b9d356ae1325ce6a9d))
+* **deps:** update dependency ops-scenario to &lt;8.8.2 ([#80](https://github.com/canonical/authentik-server-operator/issues/80)) ([853b7d8](https://github.com/canonical/authentik-server-operator/commit/853b7d869f1ae22592943730ef66ad3034af69b3))
+* harden secret idempotency and Authentik API resilience ([ab785bc](https://github.com/canonical/authentik-server-operator/commit/ab785bc50e88443988c2478ef8a0f274cdd95743))
+* support PostgreSQL read replicas and declare PgBouncer usage ([b654241](https://github.com/canonical/authentik-server-operator/commit/b654241207966f9e60c20b1a95874b363c658386))
+* **terraform:** wire the worker Grafana dashboard and default to stable ([5e813f9](https://github.com/canonical/authentik-server-operator/commit/5e813f9f3aec263281769dfa2e6f641b7007d1d6))
+
 ## [1.2.2](https://github.com/canonical/authentik-server-operator/compare/v1.2.1...v1.2.2) (2026-07-24)
 
 
