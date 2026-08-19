@@ -15,6 +15,8 @@ from ops.pebble import Layer, LayerDict
 
 from cli import CommandLine
 from constants import (
+    API_TOKEN_IDENTIFIER,
+    BOOTSTRAP_ADMIN_USERNAME,
     CERTIFICATES_FILE,
     COMMAND,
     HEALTH_CHECK_URL,
@@ -181,6 +183,20 @@ class WorkloadService:
             The recovery path.
         """
         return self._cli.create_recovery_key(username, duration)
+
+    def reset_api_token(self, token: str) -> None:
+        """Register the charm-managed API token in the Authentik database.
+
+        Args:
+            token: The token value the charm holds.
+
+        Raises:
+            PebbleError: If the command could not be run in the workload container.
+        """
+        try:
+            self._cli.reset_api_token(API_TOKEN_IDENTIFIER, BOOTSTRAP_ADMIN_USERNAME, token)
+        except PebbleExecError as e:
+            raise PebbleError(f"Failed to reset the Authentik API token. Error: {e}") from e
 
     def update_ca_certs(self) -> bool:
         """Update the CA certificates in the workload container.

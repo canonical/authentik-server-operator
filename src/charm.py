@@ -32,9 +32,10 @@ from charms.smtp_integrator.v0.smtp import SmtpRequires
 from charms.tempo_coordinator_k8s.v0.tracing import TracingEndpointRequirer
 from charms.traefik_k8s.v0.traefik_route import TraefikRouteRequirer
 
-from authentik_api import AuthentikAPI
+from authentik_api import ApiAvailability, AuthentikAPI
 from configs import CharmConfig
 from constants import (
+    BOOTSTRAP_ADMIN_USERNAME,
     CERTIFICATE_TRANSFER_INTEGRATION_NAME,
     CLUSTER_RELATION,
     DATABASE_RELATION,
@@ -265,6 +266,7 @@ class AuthentikServerCharm(ops.CharmBase):
             self._ensure_secrets,
             self._ensure_cluster_relation,
             self._ensure_traefik_route,
+            self._ensure_api_token,
             self._ensure_server_info_relation,
             self._ensure_tls,
             self._ensure_oauth_relation,
@@ -356,6 +358,38 @@ class AuthentikServerCharm(ops.CharmBase):
     def _authentik_api(self) -> AuthentikAPI:
         """A single Authentik API client per hook (shared HTTP session and caches)."""
         return AuthentikAPI(self._secrets.bootstrap_token)
+
+    def _ensure_api_token(self, event: ops.EventBase | None = None) -> bool:
+        """Ensure Authentik accepts the API token this charm holds.
+
+        Authentik registers ``AUTHENTIK_BOOTSTRAP_TOKEN`` only while bootstrapping a
+        tenant for the first time (the ``setup`` flag it guards on lives in the
+        database), and its bootstrap blueprint declares the token entry as
+        ``state: created``, so an existing token is never updated. A deployment whose
+        database predates it therefore holds a token Authentik rejects, which would
+        stall every API-backed reconciliation indefinitely. Push the charm's token
+        into the workload so such a deployment converges.
+        """
+        if not (self.unit.is_leader() and self._secrets.is_ready()):
+            return True
+
+        if not self._workload_service.is_running():
+            return True
+
+        if self._authentik_api.availability is not ApiAvailability.TOKEN_REJECTED:
+            return True
+
+        logger.warning("Authentik rejected the charm API token, registering it in the workload")
+        try:
+            self._workload_service.reset_api_token(self._secrets.bootstrap_token)
+        except PebbleError:
+            logger.exception("Failed to register the charm API token")
+            return True
+
+        # Drop the cached client so the remaining reconciliation steps, and the status
+        # check, probe the API again instead of reusing the stale rejection.
+        self.__dict__.pop("_authentik_api", None)
+        return True
 
     def _ensure_server_info_relation(self, event: ops.EventBase | None = None) -> bool:
         """Publish the Authentik host and API token to the server-info relation.
@@ -566,9 +600,30 @@ class AuthentikServerCharm(ops.CharmBase):
 
         if can_connect:
             self._collect_health_status(event)
+            self._collect_api_token_status(event)
 
         event.add_status(self.resources_patch.get_status())
         event.add_status(ops.ActiveStatus())
+
+    def _collect_api_token_status(self, event: ops.CollectStatusEvent) -> None:
+        """Report an API token Authentik refuses, which blocks API-backed reconciliation.
+
+        Reaching this means ``_ensure_api_token`` could not converge the token, so the
+        charm cannot publish server-info or provision OAuth clients. Reporting it keeps
+        the deployment from looking healthy while it is silently doing nothing.
+        """
+        if not (self._secrets.is_ready() and self._workload_service.is_running()):
+            return
+
+        if self._authentik_api.availability is not ApiAvailability.TOKEN_REJECTED:
+            return
+
+        event.add_status(
+            ops.BlockedStatus(
+                "Authentik rejected the charm API token, please check the "
+                f"{WORKLOAD_CONTAINER} container logs"
+            )
+        )
 
     def _collect_integrations_status(self, event: ops.CollectStatusEvent) -> None:
         """Collect status for integrations (database and traefik-route)."""
@@ -616,7 +671,7 @@ class AuthentikServerCharm(ops.CharmBase):
             return
 
         event.set_results({
-            "username": "akadmin",
+            "username": BOOTSTRAP_ADMIN_USERNAME,
             "password": self._secrets.bootstrap_password,
             "bootstrap-token": self._secrets.bootstrap_token,
             "warning": (
@@ -632,7 +687,7 @@ class AuthentikServerCharm(ops.CharmBase):
             event.fail("Cannot connect to the workload container.")
             return
 
-        username = event.params.get("username", "akadmin")
+        username = event.params.get("username", BOOTSTRAP_ADMIN_USERNAME)
         duration = event.params.get("duration", 10)
 
         try:

@@ -5,6 +5,7 @@
 
 import logging
 import time
+from enum import Enum
 from functools import cached_property
 from typing import Iterator
 from urllib.parse import parse_qs, urlparse
@@ -33,6 +34,19 @@ REQUEST_RETRY_BACKOFF_MAX_SECONDS = 2
 RETRYABLE_SERVER_STATUSES = frozenset({500, 502, 503, 504})
 PAGINATION_PAGE_SIZE = 100
 PAGINATION_MAX_PAGES = 1000
+
+
+class ApiAvailability(Enum):
+    """The result of probing the Authentik API with the charm's token."""
+
+    AVAILABLE = "available"
+    """The API answered an authenticated request."""
+
+    UNAVAILABLE = "unavailable"
+    """The API could not answer yet; retrying may succeed."""
+
+    TOKEN_REJECTED = "token-rejected"
+    """The API terminally rejected the token; retrying cannot succeed."""
 
 
 class AuthentikAPI:
@@ -148,22 +162,30 @@ class AuthentikAPI:
         )
 
     @cached_property
-    def is_service_available(self) -> bool:
-        """Whether the service can answer an authenticated API request.
+    def availability(self) -> ApiAvailability:
+        """The outcome of an authenticated readiness probe against the API.
 
-        Used as a readiness probe: during Authentik first-boot the API can reject
-        the bootstrap credentials with 401/403 (or 404/transient) before the token
-        is registered, so any typed API error means "not ready yet", not a crash.
+        During Authentik first-boot the API can reject the request with a transient
+        failure before it can serve traffic, which is retryable. A terminal
+        authentication or authorization failure is not: it means Authentik does not
+        know the token this client was built with, and no amount of waiting fixes it.
 
-        Cached per instance so repeated readiness checks within a single hook
-        (one client per hook) do not re-issue the request.
+        Cached per instance so repeated checks within a single hook (one client per
+        hook) do not re-issue the request.
         """
         url = f"{self.base_url}/api/v3/flows/instances/"
         try:
             self._request("GET", url, params={"page_size": 1})
+        except (AuthentikAuthenticationError, AuthentikAuthorizationError):
+            return ApiAvailability.TOKEN_REJECTED
         except AuthentikAPIError:
-            return False
-        return True
+            return ApiAvailability.UNAVAILABLE
+        return ApiAvailability.AVAILABLE
+
+    @property
+    def is_service_available(self) -> bool:
+        """Whether the service can answer an authenticated API request."""
+        return self.availability is ApiAvailability.AVAILABLE
 
     def _get_flow_uuid(self, slug: str) -> str:
         url = f"{self.base_url}/api/v3/flows/instances/"

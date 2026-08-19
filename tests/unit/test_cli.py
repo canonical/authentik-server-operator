@@ -9,7 +9,7 @@ import pytest
 from ops import Container
 from ops.pebble import ExecError
 
-from cli import CommandLine
+from cli import TOKEN_ENV_VAR, CommandLine
 from exceptions import DatabaseConnectionError, MigrationFailedError, MigrationPendingError
 
 
@@ -143,3 +143,21 @@ class TestCommandLine:
 
         with pytest.raises(ExecError):
             cli.create_recovery_key("akadmin", 15)
+
+    def test_reset_api_token_keeps_the_token_out_of_argv(
+        self, cli: CommandLine, mocked_container: MagicMock
+    ) -> None:
+        exec_mock = MagicMock()
+        exec_mock.wait_output.return_value = ("", "")
+        mocked_container.exec.return_value = exec_mock
+
+        cli.reset_api_token("authentik-bootstrap-token", "akadmin", "s3cret")
+
+        cmd = mocked_container.exec.call_args.args[0]
+        assert "s3cret" not in " ".join(cmd)
+        assert mocked_container.exec.call_args.kwargs["environment"] == {TOKEN_ENV_VAR: "s3cret"}
+        assert mocked_container.exec.call_args.kwargs["service_context"] == "authentik-server"
+        script = cmd[-1]
+        assert 'identifier="authentik-bootstrap-token"' in script
+        assert 'username="akadmin"' in script
+        assert f'environ["{TOKEN_ENV_VAR}"]' in script
