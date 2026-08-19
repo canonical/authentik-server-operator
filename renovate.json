@@ -61,6 +61,13 @@
         "automerge": true,
         "schedule": ["at any time"],
         "additionalBranchPrefix": "auto-"
+      },
+      {
+        "description": "Keep Renovate from raising the Juju provider floor to v2. These modules declare a minimum only, so a root module stays free to choose any 1.x or later, but the Canonical charm modules the authentik solution composes with (postgresql-k8s, traefik-k8s, self-signed-certificates) still cap at '~> 1.0'. Raising our floor to '>= 2.0' would make the solution and its tutorial unresolvable. Lift this once those modules ship v2-capable versions.",
+        "matchManagers": ["terraform"],
+        "matchDatasources": ["terraform-provider"],
+        "matchPackageNames": ["juju/juju"],
+        "allowedVersions": "<2.0.0"
       }
     ]
   }
