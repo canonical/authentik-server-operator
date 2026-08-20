@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1](https://github.com/canonical/authentik-server-operator/compare/v1.3.0...v1.3.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **terraform:** declare a minimum Juju provider version ([#92](https://github.com/canonical/authentik-server-operator/issues/92)) ([f397fd3](https://github.com/canonical/authentik-server-operator/commit/f397fd3f92e275d2873d1e29e5633c13b041ceaf))
+* **terraform:** declare a minimum Juju provider version, not a pessimistic one ([abb8637](https://github.com/canonical/authentik-server-operator/commit/abb8637e2e32b201e08faac30436f89807e805e3))
+
 ## [1.3.0](https://github.com/canonical/authentik-server-operator/compare/v1.2.2...v1.3.0) (2026-08-19)
 
 
