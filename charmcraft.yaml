@@ -8,9 +8,9 @@ summary: Operator for Authentik Server
 description: |
     Operator for Authentik Server
 links:
+  documentation: https://canonical-identity.readthedocs-hosted.com/authentik/reference/charms/authentik-server/
   source: https://github.com/canonical/authentik-server-operator
   issues: https://github.com/canonical/authentik-server-operator/issues
-  documentation: https://charmhub.io/authentik-server
 
 charm-user: non-root
 platforms:

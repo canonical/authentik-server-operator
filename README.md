@@ -54,17 +54,11 @@ To learn how to provision the complete Authentik stack with a single command, pl
 
 ### Documentation
 
-Please see our comprehensive documentation guides located in the [docs/](docs/) folder:
-- **Tutorials**: [Getting Started with Charmed Authentik](docs/tutorials/getting-started.md)
-- **How-To Guides**:
-  - [How to Bootstrap Charmed Authentik](docs/how-to/bootstrap-authentik.md)
-  - [How to Protect OIDC/OAuth Applications](docs/how-to/protect-oidc-oauth-applications.md)
-  - [How to Protect LDAP Applications](docs/how-to/protect-ldap-applications.md)
-  - [How to Integrate Upstream Identity Providers](docs/how-to/integrate-upstream-provider.md)
-  - [How to Manage Users and Groups](docs/how-to/manage-users-and-groups.md)
-  - [Common Operational Administration Tasks](docs/how-to/common-admin-tasks.md)
-- **Reference**: [Charmed Authentik Configuration Reference](docs/reference/configurations.md)
-- **Explanation**: [Charmed Authentik Architecture & Security Design](docs/explanation/architecture.md)
+Comprehensive documentation for Charmed Authentik is available on the [Canonical Identity Documentation](https://canonical-identity.readthedocs-hosted.com/authentik/):
+- **Tutorial**: [Getting Started with Charmed Authentik](https://canonical-identity.readthedocs-hosted.com/authentik/tutorial/getting-started/)
+- **How-To Guides**: [Charmed Authentik Operations and Integrations](https://canonical-identity.readthedocs-hosted.com/authentik/how-to/)
+- **Reference**: [Charmed Authentik Technical Reference](https://canonical-identity.readthedocs-hosted.com/authentik/reference/)
+- **Explanation**: [Charmed Authentik Architecture & Security](https://canonical-identity.readthedocs-hosted.com/authentik/explanation/)
 
 ## Integrations
 
