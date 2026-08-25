@@ -3,7 +3,10 @@
 
 """Helper class to manage the charm's secrets."""
 
-from ops import Model, ModelError
+import logging
+from functools import cached_property
+
+from ops import Model, ModelError, Secret, SecretNotFoundError
 
 from constants import (
     BOOTSTRAP_PASSWORD_KEY,
@@ -13,6 +16,8 @@ from constants import (
 )
 from env_vars import EnvVars
 from exceptions import SecretError
+
+logger = logging.getLogger(__name__)
 
 
 class Secrets:
@@ -31,34 +36,47 @@ class Secrets:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_secret_by_label(self):
-        """Return the labeled Juju secret, or None if it cannot be resolved.
-
-        A missing secret (``SecretNotFoundError``) or a transient controller error
-        (``ModelError``) both yield None so this best-effort lookup never crashes a
-        status/reconcile pass; it simply re-resolves on the next event.
-        """
+    def _lookup(self) -> Secret | None:
+        """Resolve the labeled Juju secret, or None if it cannot be resolved."""
         try:
             return self._model.get_secret(label=SECRETS_LABEL)
+        except SecretNotFoundError:
+            return None
         except ModelError:
-            # SecretNotFoundError is a ModelError subclass; both are treated as
-            # "not resolvable this pass".
+            # A transient controller error must not crash a status pass; the next
+            # event re-resolves.
+            logger.warning("Could not resolve the %s secret this hook", SECRETS_LABEL)
             return None
 
-    def _get_content(self) -> dict[str, str] | None:
-        """Fetch the secret content, or None if the secret does not exist yet.
+    @cached_property
+    def _secret(self) -> Secret | None:
+        """The labeled secret, resolved once per hook.
 
-        Resolves the secret solely by its deterministic label, so any unit can read
-        it regardless of which unit created it and without a peer-relation pointer.
+        ``Model.get_secret()`` retrieves the content too, and ``Secret.get_content()``
+        memoises it on the object, so holding the object makes every later read in
+        this hook free.
         """
-        secret = self._get_secret_by_label()
-        if secret is None:
-            return None
-        return secret.get_content(refresh=True)
+        return self._lookup()
+
+    @property
+    def _content(self) -> dict[str, str] | None:
+        """The secret content at the revision this unit tracks."""
+        return self._secret.get_content() if self._secret else None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def refresh(self) -> None:
+        """Re-read the secret at its latest revision and start tracking it.
+
+        Only for ``secret-changed`` / ``secret-expired``: refreshing on every hook
+        defeats the controller's secret-backend token reuse, and on Kubernetes each
+        newly issued token leaks a ``juju-secret-consumer-<uuid>`` ServiceAccount,
+        Role and RoleBinding into the model namespace.
+        """
+        if self._secret is not None:
+            self._secret.get_content(refresh=True)
 
     def create(
         self,
@@ -78,7 +96,7 @@ class Secrets:
             bootstrap_token: Value for ``AUTHENTIK_BOOTSTRAP_TOKEN``.
             bootstrap_password: Value for ``AUTHENTIK_BOOTSTRAP_PASSWORD``.
         """
-        if self._get_secret_by_label() is not None:
+        if self._secret is not None:
             return
         content = {
             SECRET_KEY_KEY: secret_key,
@@ -86,17 +104,22 @@ class Secrets:
             BOOTSTRAP_PASSWORD_KEY: bootstrap_password,
         }
         try:
-            self._model.app.add_secret(content, label=SECRETS_LABEL)
+            # Seeds the resolved-secret cache: ops returns a Secret carrying the
+            # content just written, which Juju itself cannot serve back until the
+            # hook completes.
+            self._secret = self._model.app.add_secret(content, label=SECRETS_LABEL)
         except ModelError:
-            # The labeled secret may have appeared between the lookup above and
-            # add_secret (concurrent/interrupted hook). Adopt it rather than
-            # propagating an "already exists" model error.
-            if self._get_secret_by_label() is None:
+            # A concurrent or interrupted hook created it first. Adopt it rather than
+            # propagating an "already exists" error; its content is whatever that hook
+            # generated, not the content above.
+            adopted = self._lookup()
+            if adopted is None:
                 raise
+            self._secret = adopted
 
     def is_ready(self) -> bool:
         """Return True when the secret exists and all keys are populated."""
-        content = self._get_content()
+        content = self._content
         if not content:
             return False
         return all(
@@ -118,7 +141,7 @@ class Secrets:
         Raises:
             SecretError: If the secret has not been created yet.
         """
-        content = self._get_content()
+        content = self._content
         if not content or not content.get(SECRET_KEY_KEY):
             raise SecretError("Secret key is not available")
         return content[SECRET_KEY_KEY]
@@ -130,7 +153,7 @@ class Secrets:
         Raises:
             SecretError: If the secret has not been created yet.
         """
-        content = self._get_content()
+        content = self._content
         if not content or not content.get(BOOTSTRAP_TOKEN_KEY):
             raise SecretError("Bootstrap token is not available")
         return content[BOOTSTRAP_TOKEN_KEY]
@@ -142,7 +165,7 @@ class Secrets:
         Raises:
             SecretError: If the secret has not been created yet.
         """
-        content = self._get_content()
+        content = self._content
         if not content or not content.get(BOOTSTRAP_PASSWORD_KEY):
             raise SecretError("Bootstrap password is not available")
         return content[BOOTSTRAP_PASSWORD_KEY]

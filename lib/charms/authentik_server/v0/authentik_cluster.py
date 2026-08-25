@@ -77,6 +77,7 @@ databag; they are carried by the granted Juju secret instead.
 """
 
 import logging
+from functools import cached_property
 from typing import Optional
 
 from ops import ModelError, Secret, SecretNotFoundError
@@ -86,13 +87,14 @@ from ops.charm import (
     RelationChangedEvent,
     RelationCreatedEvent,
     RelationEvent,
+    SecretChangedEvent,
 )
 from ops.framework import EventSource, Object, ObjectEvents
 from pydantic import BaseModel, Field, ValidationError
 
 LIBID = "810ec184ec9e4c61aa18b3eef8e5e241"
 LIBAPI = 0
-LIBPATCH = 3
+LIBPATCH = 4
 
 PYDEPS = ["pydantic"]
 
@@ -100,6 +102,16 @@ RELATION_NAME = "authentik-cluster"
 INTERFACE_NAME = "authentik_cluster"
 
 logger = logging.getLogger(__name__)
+
+
+def _same_secret(a: Optional[str], b: Optional[str]) -> bool:
+    """Compare two Juju secret IDs, ignoring ``secret:`` vs ``secret://<model>/`` form."""
+    if not a or not b:
+        return False
+    return a.rsplit("/", 1)[-1].removeprefix("secret:") == b.rsplit("/", 1)[-1].removeprefix(
+        "secret:"
+    )
+
 
 
 class ProviderData(BaseModel):
@@ -293,6 +305,10 @@ class AuthentikClusterRequirer(Object):
             self._charm.on[relation_name].relation_broken,
             self._on_relation_broken,
         )
+        self.framework.observe(
+            self._charm.on.secret_changed,
+            self._on_secret_changed,
+        )
 
     def _on_relation_changed(self, event: RelationChangedEvent) -> None:
         if not event.relation.app:
@@ -304,21 +320,67 @@ class AuthentikClusterRequirer(Object):
     def _on_relation_broken(self, event: RelationBrokenEvent) -> None:
         self.on.cluster_removed.emit(event.relation)
 
+    def _on_secret_changed(self, event: SecretChangedEvent) -> None:
+        """Adopt a new revision of the provider's secret and re-emit cluster_changed.
+
+        Saves requirers from observing ``secret-changed`` themselves.
+        """
+        relation = self._charm.model.get_relation(self._relation_name)
+        if not relation or not relation.app:
+            return
+        published = relation.data[relation.app].get("secret_key_secret_id")
+        if not _same_secret(event.secret.id, published):
+            return
+        self.refresh()
+        self.on.cluster_changed.emit(relation)
+
+    @cached_property
+    def _secret(self) -> Optional[Secret]:
+        """The provider's secret, resolved once per hook.
+
+        ``Model.get_secret()`` retrieves the content too, and ``Secret.get_content()``
+        memoises it on the object, so holding the object makes every later read in
+        this hook free.
+        """
+        relation = self._charm.model.get_relation(self._relation_name)
+        if not relation or not relation.app:
+            return None
+        secret_id = relation.data[relation.app].get("secret_key_secret_id")
+        if not secret_id:
+            return None
+        try:
+            return self._charm.model.get_secret(id=secret_id)
+        except (SecretNotFoundError, ModelError) as e:
+            logger.warning("Failed to resolve the cluster secret: %s", e)
+            return None
+
+    def refresh(self) -> None:
+        """Re-read the provider secret at its latest revision and track it.
+
+        Only for ``secret-changed``: refreshing on every read defeats the controller's
+        secret-backend token reuse, and on Kubernetes each newly issued token leaks a
+        ``juju-secret-consumer-<uuid>`` ServiceAccount, Role and RoleBinding into the
+        model namespace.
+        """
+        if self._secret is not None:
+            self._secret.get_content(refresh=True)
+
     def get_provider_data(self) -> Optional[ProviderData]:
-        """Return parsed ProviderData with resolved secrets, or None if unavailable or invalid."""
+        """Return parsed ProviderData with resolved secrets, or None if unavailable or invalid.
+
+        The relation databag and the secret content are both resolved at most once per
+        hook, so the repeated calls made by ``is_ready()``, ``get_secret_key()`` and
+        ``get_database_config()`` cost only the pydantic parse.
+        """
         relation = self._charm.model.get_relation(self._relation_name)
         if not relation or not relation.app:
             return None
         raw = dict(relation.data[relation.app])
-        if not (secret_id := raw.get("secret_key_secret_id")):
-            return None
-
-        secret = self._get_secret(secret_id)
-        if not secret:
+        if self._secret is None:
             return None
 
         try:
-            content = secret.get_content(refresh=True)
+            content = self._secret.get_content()
         except (SecretNotFoundError, ModelError) as e:
             logger.warning("Failed to retrieve content for cluster secret: %s", e)
             return None
@@ -327,18 +389,9 @@ class AuthentikClusterRequirer(Object):
         raw["secret_key"] = content.get("secret-key")
 
         try:
-            data = ProviderData(**raw)
+            return ProviderData(**raw)
         except ValidationError:
             logger.warning("Invalid data in authentik-cluster relation databag or secret")
-            return None
-
-        return data
-
-    def _get_secret(self, secret_id: str) -> Optional[Secret]:
-        """Fetch a secret by ID, returning None on any error."""
-        try:
-            return self._charm.model.get_secret(id=secret_id)
-        except (SecretNotFoundError, ModelError):
             return None
 
     def get_secret_key(self) -> Optional[str]:
