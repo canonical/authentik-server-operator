@@ -50,6 +50,7 @@ from constants import (
     PEBBLE_READY_CHECK_NAME,
     PEER_RELATION,
     PROMETHEUS_RELATION_NAME,
+    SECRETS_LABEL,
     SERVER_INFO_RELATION,
     SMTP_RELATION,
     TRACING_RELATION_NAME,
@@ -183,8 +184,8 @@ class AuthentikServerCharm(ops.CharmBase):
         # Lifecycle
         self.framework.observe(self.on.leader_elected, self._on_holistic_handler)
         self.framework.observe(self.on.leader_settings_changed, self._on_holistic_handler)
-        self.framework.observe(self.on.secret_changed, self._on_holistic_handler)
-        self.framework.observe(self.on.secret_expired, self._on_holistic_handler)
+        self.framework.observe(self.on.secret_changed, self._on_secret_revision_changed)
+        self.framework.observe(self.on.secret_expired, self._on_secret_revision_changed)
         self.framework.observe(self.on.update_status, self._on_holistic_handler)
 
         # Peer relation
@@ -249,6 +250,14 @@ class AuthentikServerCharm(ops.CharmBase):
             SmtpData.load(self.smtp),
             TraefikRouteIntegration.load(self.traefik_route),
         )
+
+    def _on_secret_revision_changed(
+        self, event: ops.SecretChangedEvent | ops.SecretExpiredEvent
+    ) -> None:
+        """Adopt the new revision of the charm's own secret, then reconcile."""
+        if event.secret.label == SECRETS_LABEL:
+            self._secrets.refresh()
+        self._on_holistic_handler(event)
 
     def _on_holistic_handler(self, event: ops.EventBase) -> None:
         """Entry point for the centralized reconciliation handler."""

@@ -104,12 +104,12 @@ class WorkloadService:
         """Check if the workload service is running and healthy."""
         try:
             service = self._container.get_service(WORKLOAD_SERVICE)
+            checks = self._container.get_checks()
         except (ModelError, PebbleConnectionError) as e:
             logger.error("Failed to get pebble service: %s", e)
             return False
         if not service.is_running():
             return False
-        checks = self._container.get_checks()
         ready_check = checks.get(PEBBLE_READY_CHECK_NAME)
         if not ready_check:
             return False
@@ -119,6 +119,7 @@ class WorkloadService:
         """Check if the workload service health check is failing."""
         try:
             service = self._container.get_service(WORKLOAD_SERVICE)
+            checks = self._container.get_checks()
         except (ModelError, PebbleConnectionError):
             return False
         # service.current is typically an ops.pebble.ServiceStatus enum member.
@@ -131,7 +132,6 @@ class WorkloadService:
             return True
         if not service.is_running():
             return False
-        checks = self._container.get_checks()
         ready_check = checks.get(PEBBLE_READY_CHECK_NAME)
         if not ready_check:
             return False
@@ -145,10 +145,12 @@ class WorkloadService:
             DatabaseConnectionError: If the database connection failed.
             MigrationPendingError: If migrations are currently running.
             MigrationFailedError: If database migration failed.
-            WorkloadNotRunningError: If the workload service is not running.
+            WorkloadNotRunningError: If the workload service is not running, or Pebble
+                is unreachable.
         """
         try:
             service = self._container.get_service(WORKLOAD_SERVICE)
+            checks = self._container.get_checks()
         except (ModelError, PebbleConnectionError) as e:
             raise WorkloadNotRunningError("Failed to connect to Pebble") from e
 
@@ -161,13 +163,18 @@ class WorkloadService:
         if not service.is_running():
             raise WorkloadNotRunningError("Service is not running")
 
-        checks = self._container.get_checks()
         ready_check = checks.get(PEBBLE_READY_CHECK_NAME)
         if not ready_check:
             raise WorkloadNotRunningError("Pebble ready check not found")
 
         if ready_check.status == CheckStatus.DOWN:
-            self._cli.check_migrations()
+            try:
+                self._cli.check_migrations()
+            except PebbleConnectionError as e:
+                # Kubernetes restarts the container when the ready check keeps failing,
+                # which destroys the Pebble socket mid-exec. Report it as "not running"
+                # instead of letting it escape and error the hook.
+                raise WorkloadNotRunningError("Pebble went away during diagnostics") from e
 
         if ready_check.status != CheckStatus.UP or (ready_check.successes or 0) == 0:
             raise WorkloadNotRunningError("Service is starting up")

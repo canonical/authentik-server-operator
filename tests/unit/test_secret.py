@@ -81,9 +81,11 @@ class TestSecrets:
         self, mocked_model: MagicMock
     ) -> None:
         # First label lookup misses, add_secret races an "already exists" ModelError,
-        # then the second label lookup adopts the concurrently created secret.
+        # then the second label lookup adopts the concurrently created secret and a
+        # third resolves its content.
         mocked_model.get_secret.side_effect = [
             SecretNotFoundError("not found"),
+            _make_secret(_FULL_CONTENT),
             _make_secret(_FULL_CONTENT),
         ]
         mocked_model.app.add_secret.side_effect = ModelError("secret ... already exists")
@@ -152,3 +154,89 @@ class TestSecrets:
         assert secrets.bootstrap_token == "test-token"
         assert secrets.bootstrap_password == "test-password"
         mocked_model.get_secret.assert_called_with(label=SECRETS_LABEL)
+
+    # --- Read amplification / revision tracking ---
+
+    def test_secret_is_resolved_once_per_instance(self, mocked_model: MagicMock) -> None:
+        # `Model.get_secret()` is a hook tool and it retrieves the content, so holding
+        # the resolved Secret is what keeps a hook down to a single round trip.
+        mocked_model.get_secret.return_value = _make_secret(_FULL_CONTENT)
+        secrets = Secrets(mocked_model)
+
+        assert secrets.is_ready() is True
+        secrets.to_env_vars()
+
+        assert mocked_model.get_secret.call_count == 1
+
+    def test_reads_tracked_revision_by_default(self, mocked_model: MagicMock) -> None:
+        # refresh=True re-issues the unit's secret backend token, so steady-state
+        # reads must never ask for the latest revision.
+        secret = _make_secret(_FULL_CONTENT)
+        mocked_model.get_secret.return_value = secret
+        secrets = Secrets(mocked_model)
+
+        assert secrets.is_ready() is True
+        secrets.to_env_vars()
+
+        assert all(
+            call.kwargs.get("refresh") is not True for call in secret.get_content.mock_calls
+        )
+
+    def test_refresh_reuses_the_resolved_secret(self, mocked_model: MagicMock) -> None:
+        # One refreshed read, not a fresh lookup followed by a refreshed read.
+        secret = _make_secret(_FULL_CONTENT)
+        mocked_model.get_secret.return_value = secret
+        secrets = Secrets(mocked_model)
+        assert secrets.is_ready() is True
+
+        secrets.refresh()
+
+        assert mocked_model.get_secret.call_count == 1
+        assert secret.get_content.call_args_list[-1].kwargs == {"refresh": True}
+
+    def test_refresh_exposes_the_new_revision(self, mocked_model: MagicMock) -> None:
+        stale = _make_secret(_FULL_CONTENT)
+        mocked_model.get_secret.return_value = stale
+        secrets = Secrets(mocked_model)
+        assert secrets.secret_key == "test-secret-key"
+
+        stale.get_content.return_value = {**_FULL_CONTENT, SECRET_KEY_KEY: "rotated-key"}
+        secrets.refresh()
+
+        assert secrets.secret_key == "rotated-key"
+
+    def test_create_exposes_the_content_it_wrote(self, mocked_model: MagicMock) -> None:
+        # _ensure_secrets checks is_ready() before create(), and Juju cannot serve a
+        # just-added secret back within the same hook. ops returns a Secret carrying
+        # the written content, so holding it is what makes the credentials readable to
+        # later callers in this hook.
+        mocked_model.get_secret.side_effect = SecretNotFoundError("not found")
+        written = {
+            SECRET_KEY_KEY: "sk",
+            BOOTSTRAP_TOKEN_KEY: "bt",
+            BOOTSTRAP_PASSWORD_KEY: "bp",
+        }
+        mocked_model.app.add_secret.return_value = _make_secret(written)
+        secrets = Secrets(mocked_model)
+        assert secrets.is_ready() is False
+
+        secrets.create("sk", "bt", "bp")
+
+        assert secrets.is_ready() is True
+        assert secrets.secret_key == "sk"
+
+    def test_create_adopts_the_content_of_a_concurrent_secret(
+        self, mocked_model: MagicMock
+    ) -> None:
+        # The locally generated content was never stored, so the adopted secret's own
+        # content must win.
+        mocked_model.get_secret.side_effect = [
+            SecretNotFoundError("not found"),
+            _make_secret(_FULL_CONTENT),
+        ]
+        mocked_model.app.add_secret.side_effect = ModelError("already exists")
+        secrets = Secrets(mocked_model)
+
+        secrets.create("sk", "bt", "bp")
+
+        assert secrets.secret_key == "test-secret-key"

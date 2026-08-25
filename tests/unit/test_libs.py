@@ -26,6 +26,7 @@ from charms.authentik_server.v0.authentik_server_info import (
 )
 from charms.authentik_server.v0.authentik_server_info import ProviderData as ServerInfoProviderData
 from ops import testing
+from pytest_mock import MockerFixture
 
 # ---------------------------------------------------------------------------
 # Metadata for minimal test charms
@@ -294,6 +295,93 @@ class TestAuthentikClusterRequirer:
         state_out = context.run(context.on.relation_changed(cluster_relation), state)
 
         assert state_out.unit_status == testing.ActiveStatus("ready")
+
+    def test_secret_is_resolved_once_and_without_refresh(
+        self,
+        context: testing.Context,
+        cluster_relation: testing.Relation,
+        cluster_secret: testing.Secret,
+        mocker: MockerFixture,
+    ) -> None:
+        # is_ready(), get_secret_key() and get_database_config() are each called
+        # several times per hook by the worker charm. `Model.get_secret()` is the hook
+        # tool that costs a round trip, and it must run once; `Secret.get_content()`
+        # then serves from the object's own memo, and must never ask for a refresh.
+        state = testing.State(leader=False, relations=[cluster_relation], secrets=[cluster_secret])
+        lookups = mocker.spy(ops.Model, "get_secret")
+        reads = mocker.spy(ops.Secret, "get_content")
+
+        with context(context.on.config_changed(), state) as manager:
+            manager.run()
+            charm = manager.charm
+            charm.cluster.get_secret_key()
+            charm.cluster.get_database_config()
+            charm.cluster.is_ready()
+
+        assert lookups.call_count == 1
+        assert all(call.kwargs.get("refresh") is not True for call in reads.call_args_list)
+
+    def test_secret_changed_adopts_latest_revision(
+        self,
+        context: testing.Context,
+        mocker: MockerFixture,
+    ) -> None:
+        rotated = testing.Secret(
+            tracked_content={"secret-key": "old-key", "db-password": "pg-password"},
+            latest_content={"secret-key": "new-key", "db-password": "pg-password"},
+        )
+        relation = testing.Relation(
+            "authentik-cluster",
+            remote_app_data={
+                "secret_key_secret_id": rotated.id,
+                "server_version": "2026.1.0",
+                "db_host": "pg-host",
+                "db_port": "5432",
+                "db_user": "pg-user",
+                "db_name": "pg-db",
+            },
+        )
+        state = testing.State(leader=False, relations=[relation], secrets=[rotated])
+        lookups = mocker.spy(ops.Model, "get_secret")
+
+        with context(context.on.secret_changed(rotated), state) as manager:
+            manager.run()
+            assert manager.charm.cluster.get_secret_key() == "new-key"
+
+        # The refreshed read must reuse the resolved Secret, not perform a second
+        # lookup: Model.get_secret() itself fetches the tracked revision, so looking
+        # up again before refreshing wastes a round trip.
+        assert lookups.call_count == 1
+
+    def test_secret_changed_reemits_cluster_changed(
+        self,
+        context: testing.Context,
+        cluster_relation: testing.Relation,
+        cluster_secret: testing.Secret,
+    ) -> None:
+        # Without this the worker would not reconcile until the next unrelated hook.
+        state = testing.State(leader=False, relations=[cluster_relation], secrets=[cluster_secret])
+
+        state_out = context.run(context.on.secret_changed(cluster_secret), state)
+
+        assert state_out.unit_status == testing.ActiveStatus("ready")
+
+    def test_unrelated_secret_changed_is_ignored(
+        self,
+        context: testing.Context,
+        cluster_relation: testing.Relation,
+        cluster_secret: testing.Secret,
+    ) -> None:
+        other = testing.Secret(tracked_content={"unrelated": "value"})
+        state = testing.State(
+            leader=False,
+            relations=[cluster_relation],
+            secrets=[cluster_secret, other],
+        )
+
+        state_out = context.run(context.on.secret_changed(other), state)
+
+        assert state_out.unit_status == testing.UnknownStatus()
 
     def test_get_provider_data_returns_none_when_no_relation(
         self, context: testing.Context

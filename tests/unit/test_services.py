@@ -7,7 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from ops import ModelError
-from ops.pebble import CheckStatus, ExecError, ServiceStatus
+from ops.pebble import CheckStatus
+from ops.pebble import ConnectionError as PebbleConnectionError
+from ops.pebble import ExecError, ServiceStatus
 
 from constants import PEBBLE_READY_CHECK_NAME
 from exceptions import (
@@ -285,3 +287,51 @@ class TestWorkloadService:
 
         with pytest.raises(MigrationFailedError):
             workload_service.check_health()
+
+    # --- Pebble disappearing mid-hook ---
+
+    def test_check_health_when_pebble_dies_during_migration_check(
+        self, workload_service: WorkloadService, mocked_container: MagicMock
+    ) -> None:
+        # Kubernetes kills the container when the ready check keeps failing, so the
+        # socket can vanish while `manage migrate --check` is still being waited on.
+        # That must surface as "not running", not as an uncaught hook exception.
+        service_mock = MagicMock()
+        service_mock.current = ServiceStatus.ACTIVE
+        service_mock.is_running.return_value = True
+        mocked_container.get_service.return_value = service_mock
+
+        check_mock = MagicMock()
+        check_mock.status = CheckStatus.DOWN
+        mocked_container.get_checks.return_value = {PEBBLE_READY_CHECK_NAME: check_mock}
+
+        exec_mock = MagicMock()
+        exec_mock.wait_output.side_effect = PebbleConnectionError(
+            "Could not connect to Pebble: socket not found"
+        )
+        mocked_container.exec.return_value = exec_mock
+
+        with pytest.raises(WorkloadNotRunningError):
+            workload_service.check_health()
+
+    def test_check_health_when_get_checks_loses_pebble(
+        self, workload_service: WorkloadService, mocked_container: MagicMock
+    ) -> None:
+        mocked_container.get_checks.side_effect = PebbleConnectionError("socket not found")
+
+        with pytest.raises(WorkloadNotRunningError):
+            workload_service.check_health()
+
+    def test_is_running_false_when_get_checks_loses_pebble(
+        self, workload_service: WorkloadService, mocked_container: MagicMock
+    ) -> None:
+        mocked_container.get_checks.side_effect = PebbleConnectionError("socket not found")
+
+        assert workload_service.is_running() is False
+
+    def test_is_failing_false_when_get_checks_loses_pebble(
+        self, workload_service: WorkloadService, mocked_container: MagicMock
+    ) -> None:
+        mocked_container.get_checks.side_effect = PebbleConnectionError("socket not found")
+
+        assert workload_service.is_failing() is False

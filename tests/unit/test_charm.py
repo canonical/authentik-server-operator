@@ -656,6 +656,71 @@ class TestSmtpEvents:
         assert env.get("AUTHENTIK_EMAIL__FROM") == "sender@example.com"
 
 
+class TestSecretRevisionEvents:
+    """The charm must only adopt a new secret revision when Juju signals one."""
+
+    @staticmethod
+    def _rotated_secret() -> testing.Secret:
+        return testing.Secret(
+            tracked_content={
+                "secret-key": "old-secret-key",
+                "bootstrap-token": "test-bootstrap-token",
+                "bootstrap-password": "test-bootstrap-password",
+            },
+            latest_content={
+                "secret-key": "new-secret-key",
+                "bootstrap-token": "test-bootstrap-token",
+                "bootstrap-password": "test-bootstrap-password",
+            },
+            label="authentik-server-secrets",
+        )
+
+    @staticmethod
+    def _layer_env(state_out: testing.State) -> dict:
+        container = state_out.get_container(WORKLOAD_CONTAINER)
+        services = container.plan.to_dict().get("services", {})
+        return services[WORKLOAD_SERVICE].get("environment", {})
+
+    def test_ordinary_hook_keeps_tracked_revision(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+    ) -> None:
+        # A refresh on every read re-issues the unit's secret backend token, which
+        # on Kubernetes leaks a juju-secret-consumer ServiceAccount/Role/RoleBinding.
+        state = create_state(
+            relations=[db_relation, peer_relation, cluster_relation, traefik_route_relation],
+            secrets=[self._rotated_secret()],
+        )
+
+        state_out = context.run(context.on.config_changed(), state)
+
+        assert self._layer_env(state_out).get("AUTHENTIK_SECRET_KEY") == "old-secret-key"
+
+    def test_secret_changed_adopts_new_revision(
+        self,
+        context: testing.Context,
+        db_relation: testing.Relation,
+        peer_relation: testing.PeerRelation,
+        cluster_relation: testing.Relation,
+        traefik_route_relation: testing.Relation,
+        all_satisfied_conditions: None,
+    ) -> None:
+        secret = self._rotated_secret()
+        state = create_state(
+            relations=[db_relation, peer_relation, cluster_relation, traefik_route_relation],
+            secrets=[secret],
+        )
+
+        state_out = context.run(context.on.secret_changed(secret), state)
+
+        assert self._layer_env(state_out).get("AUTHENTIK_SECRET_KEY") == "new-secret-key"
+
+
 class TestTraefikRouteEvents:
     def test_on_traefik_route_ready(
         self,
