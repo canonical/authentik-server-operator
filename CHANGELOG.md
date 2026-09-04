@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.1](https://github.com/canonical/authentik-server-operator/compare/v1.3.0...v1.3.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **deps:** update dependency lightkube-models to ~=1.37.0.8 ([8c9c2f1](https://github.com/canonical/authentik-server-operator/commit/8c9c2f1dcc37e3f39286eb80f8926451dc80a76d))
+* **deps:** update dependency lightkube-models to ~=1.37.0.8 ([#101](https://github.com/canonical/authentik-server-operator/issues/101)) ([3ff2e27](https://github.com/canonical/authentik-server-operator/commit/3ff2e2746260b9a56b0688de739faeb0401e0f52))
+* **deps:** update dependency ops-scenario to &lt;8.8.3 ([48ee661](https://github.com/canonical/authentik-server-operator/commit/48ee661cb913aa020b0d089dc7efcc194302cb08))
+* **deps:** update dependency ops-scenario to &lt;8.8.3 ([#102](https://github.com/canonical/authentik-server-operator/issues/102)) ([c617547](https://github.com/canonical/authentik-server-operator/commit/c617547012a9b682a4395b6fdee2b45c1355e492))
+* stop leaking Juju secret-backend tokens and erroring on lost Pebble ([dd42259](https://github.com/canonical/authentik-server-operator/commit/dd42259d80fa0a764858e7bdb86d9ed623fe2392))
+* **terraform:** declare a minimum Juju provider version ([#92](https://github.com/canonical/authentik-server-operator/issues/92)) ([f397fd3](https://github.com/canonical/authentik-server-operator/commit/f397fd3f92e275d2873d1e29e5633c13b041ceaf))
+* **terraform:** declare a minimum Juju provider version, not a pessimistic one ([abb8637](https://github.com/canonical/authentik-server-operator/commit/abb8637e2e32b201e08faac30436f89807e805e3))
+
 ## [1.3.0](https://github.com/canonical/authentik-server-operator/compare/v1.2.2...v1.3.0) (2026-08-19)
 
 
