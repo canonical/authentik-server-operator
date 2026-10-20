@@ -249,3 +249,76 @@ def test_is_service_available_caches_successful_probe() -> None:
     assert api.is_service_available is True
 
     api.session.request.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "redirect_uris,grant_types,expected_redirect_uris,expected_grant_types",
+    [
+        (
+            ["https://a.test/cb", "https://b.test/cb"],
+            ["authorization_code", "refresh_token"],
+            [
+                {"matching_mode": "strict", "url": "https://a.test/cb"},
+                {"matching_mode": "strict", "url": "https://b.test/cb"},
+            ],
+            ["authorization_code", "refresh_token"],
+        ),
+        (
+            [],
+            ["client_credentials"],
+            [],
+            ["client_credentials"],
+        ),
+        (
+            "https://a.test/cb\nhttps://b.test/cb",
+            None,
+            [
+                {"matching_mode": "strict", "url": "https://a.test/cb"},
+                {"matching_mode": "strict", "url": "https://b.test/cb"},
+            ],
+            ["authorization_code", "refresh_token", "client_credentials"],
+        ),
+    ],
+)
+def test_create_and_update_oauth_provider_payload_formatting(
+    redirect_uris: str | list[str],
+    grant_types: list[str] | None,
+    expected_redirect_uris: list[dict[str, str]],
+    expected_grant_types: list[str],
+) -> None:
+    api = AuthentikAPI("token")
+    api.session.request = MagicMock(return_value=response(201, '{"pk": 77}'))
+
+    pk = api.create_oauth_provider(
+        name="my-provider",
+        client_id="cid",
+        client_secret="csecret",
+        redirect_uris=redirect_uris,
+        authorization_flow="auth-flow",
+        invalidation_flow="inv-flow",
+        property_mappings=["pm-1"],
+        grant_types=grant_types,
+    )
+
+    assert pk == 77
+    create_payload = api.session.request.call_args.kwargs["json"]
+    assert create_payload["redirect_uris"] == expected_redirect_uris
+    assert create_payload["grant_types"] == expected_grant_types
+
+    api.session.request.reset_mock()
+    api.session.request.return_value = response(200, '{"pk": 77}')
+    api.update_oauth_provider(
+        provider_pk=77,
+        name="my-provider",
+        client_id="cid",
+        client_secret="csecret",
+        redirect_uris=redirect_uris,
+        authorization_flow="auth-flow",
+        invalidation_flow="inv-flow",
+        property_mappings=["pm-1"],
+        grant_types=grant_types,
+    )
+
+    update_payload = api.session.request.call_args.kwargs["json"]
+    assert update_payload["redirect_uris"] == expected_redirect_uris
+    assert update_payload["grant_types"] == expected_grant_types

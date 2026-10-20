@@ -1,4 +1,5 @@
 ops ~=3.0
+charmlibs-interfaces-oauth~=1.2.0
 cosl~=1.11.0
 jinja2
 pydantic~=2.14.0

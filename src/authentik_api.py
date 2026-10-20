@@ -284,7 +284,7 @@ class AuthentikAPI:
         name: str,
         client_id: str,
         client_secret: str,
-        redirect_uris: str,
+        redirect_uris: str | list[str] | list[dict],
         authorization_flow: str,
         invalidation_flow: str,
         property_mappings: list[str],
@@ -298,8 +298,11 @@ class AuthentikAPI:
             "authorization_flow": authorization_flow,
             "invalidation_flow": invalidation_flow,
             "property_mappings": property_mappings,
-            "grant_types": grant_types
-            or ["authorization_code", "refresh_token", "client_credentials"],
+            "grant_types": (
+                grant_types
+                if grant_types is not None
+                else ["authorization_code", "refresh_token", "client_credentials"]
+            ),
         }
 
     def create_oauth_provider(
@@ -307,7 +310,7 @@ class AuthentikAPI:
         name: str,
         client_id: str,
         client_secret: str,
-        redirect_uris: str,
+        redirect_uris: str | list[str] | list[dict],
         authorization_flow: str,
         invalidation_flow: str,
         property_mappings: list[str],
@@ -345,7 +348,7 @@ class AuthentikAPI:
         name: str,
         client_id: str,
         client_secret: str,
-        redirect_uris: str,
+        redirect_uris: str | list[str] | list[dict],
         authorization_flow: str,
         invalidation_flow: str,
         property_mappings: list[str],
