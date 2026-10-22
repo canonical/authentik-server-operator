@@ -446,7 +446,10 @@ def test_oauth_relation_reconcile_uses_cache(
         },
     )
 
-    config_str = "https://client.example.com/oauth/callback:test-flow-uuid:test-invalidation-flow-uuid:email,openid"
+    config_str = (
+        "https://client.example.com/oauth/callback:test-flow-uuid:"
+        "test-invalidation-flow-uuid:email,openid:authorization_code"
+    )
     config_hash = hashlib.sha256(config_str.encode("utf-8")).hexdigest()
 
     peer_relation_with_cache = testing.PeerRelation(
@@ -600,7 +603,7 @@ def sync_objects(
         cache,
         "client-id",
         "client-secret",
-        "https://client.test/callback",
+        ["https://client.test/callback"],
         "authorization-flow",
         "invalidation-flow",
         ["openid-mapping"],
@@ -821,3 +824,182 @@ def test_reconcile_invalidates_flow_cache_when_a_sync_hits_a_stale_flow(
     assert peer.get_string(AUTHORIZATION_FLOW_CACHE_PEER_KEY) == ""
     assert peer.get_string(INVALIDATION_FLOW_CACHE_PEER_KEY) == ""
     api.get_authorization_flow_uuid.assert_not_called()
+
+
+def test_oauth_client_without_redirect_uri_when_authorization_code_not_requested(
+    context: testing.Context,
+    db_relation: testing.Relation,
+    peer_relation: testing.PeerRelation,
+    cluster_relation: testing.Relation,
+    authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
+    all_satisfied_conditions: None,
+    mock_authentik_api: MagicMock,
+) -> None:
+    """A client not requesting authorization_code can register without a redirect_uri."""
+    oauth_relation = testing.Relation(
+        endpoint=OAUTH_RELATION_NAME,
+        interface="oauth",
+        remote_app_name="client-app",
+        remote_app_data={
+            "scope": "openid email",
+            "grant_types": json.dumps(["client_credentials"]),
+            "token_endpoint_auth_method": "client_secret_basic",
+            "audience": json.dumps([]),
+        },
+    )
+    state = create_state(
+        leader=True,
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
+        secrets=[authentik_secrets],
+    )
+
+    state_out = context.run(context.on.relation_changed(oauth_relation), state)
+
+    rel_out = state_out.get_relation(oauth_relation.id)
+    assert "client_id" in rel_out.local_app_data
+    assert "client_secret_id" in rel_out.local_app_data
+    mock_authentik_api.create_oauth_provider.assert_called_once()
+    call_kwargs = mock_authentik_api.create_oauth_provider.call_args.kwargs
+    assert call_kwargs["redirect_uris"] == []
+    assert call_kwargs["grant_types"] == ["client_credentials"]
+    mock_authentik_api.create_application.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "invalid_data",
+    [
+        {"grant_types": json.dumps(["authorization_code"])},
+        {"grant_types": json.dumps(["authorization_code"]), "redirect_uri": ""},
+        {"grant_types": json.dumps(["authorization_code"]), "redirect_uri": json.dumps([])},
+        {"grant_types": json.dumps([]), "redirect_uri": "https://client.test/callback"},
+    ],
+)
+def test_oauth_invalid_client_config_is_skipped(
+    invalid_data: dict[str, str],
+    context: testing.Context,
+    db_relation: testing.Relation,
+    peer_relation: testing.PeerRelation,
+    cluster_relation: testing.Relation,
+    authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
+    all_satisfied_conditions: None,
+    mock_authentik_api: MagicMock,
+) -> None:
+    """A client with invalid grant_types or missing/empty redirect_uri fails validation and is skipped."""
+    oauth_relation = testing.Relation(
+        endpoint=OAUTH_RELATION_NAME,
+        interface="oauth",
+        remote_app_name="client-app",
+        remote_app_data={
+            "scope": "openid email",
+            "token_endpoint_auth_method": "client_secret_basic",
+            "audience": json.dumps([]),
+            **invalid_data,
+        },
+    )
+    state = create_state(
+        leader=True,
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
+        secrets=[authentik_secrets],
+    )
+
+    state_out = context.run(context.on.relation_changed(oauth_relation), state)
+
+    rel_out = state_out.get_relation(oauth_relation.id)
+    assert "issuer_url" in rel_out.local_app_data
+    assert "client_id" not in rel_out.local_app_data
+    assert "client_secret_id" not in rel_out.local_app_data
+    mock_authentik_api.create_oauth_provider.assert_not_called()
+    mock_authentik_api.create_application.assert_not_called()
+
+
+def test_oauth_multiple_redirect_uris_and_canonical_cache(
+    context: testing.Context,
+    db_relation: testing.Relation,
+    peer_relation: testing.PeerRelation,
+    cluster_relation: testing.Relation,
+    authentik_secrets: testing.Secret,
+    traefik_route_relation: testing.Relation,
+    all_satisfied_conditions: None,
+    mock_authentik_api: MagicMock,
+) -> None:
+    """Multiple redirect_uris are passed as a list and reordered URIs hit the cache."""
+    uris = ["https://b.example.com/oauth/callback", "https://a.example.com/oauth/callback"]
+    oauth_relation = testing.Relation(
+        endpoint=OAUTH_RELATION_NAME,
+        interface="oauth",
+        remote_app_name="client-app",
+        remote_app_data={
+            "redirect_uri": json.dumps(uris),
+            "scope": "openid email",
+            "grant_types": json.dumps(["authorization_code", "refresh_token"]),
+            "token_endpoint_auth_method": "client_secret_basic",
+            "audience": json.dumps([]),
+        },
+    )
+    state = create_state(
+        leader=True,
+        relations=[
+            db_relation,
+            peer_relation,
+            cluster_relation,
+            oauth_relation,
+            traefik_route_relation,
+        ],
+        secrets=[authentik_secrets],
+    )
+
+    state_out = context.run(context.on.relation_changed(oauth_relation), state)
+
+    mock_authentik_api.create_oauth_provider.assert_called_once()
+    call_kwargs = mock_authentik_api.create_oauth_provider.call_args.kwargs
+    assert call_kwargs["redirect_uris"] == uris
+    assert call_kwargs["grant_types"] == ["authorization_code", "refresh_token"]
+
+    # Reordering redirect_uris and grant_types should hit the sync cache without API writes
+    mock_authentik_api.reset_mock()
+    rel_out = state_out.get_relation(oauth_relation.id)
+    peer_out = state_out.get_relations("authentik-peers")[0]
+    reordered_relation = testing.Relation(
+        endpoint=OAUTH_RELATION_NAME,
+        interface="oauth",
+        id=oauth_relation.id,
+        remote_app_name="client-app",
+        remote_app_data={
+            "redirect_uri": json.dumps(list(reversed(uris))),
+            "scope": "openid email",
+            "grant_types": json.dumps(["refresh_token", "authorization_code"]),
+            "token_endpoint_auth_method": "client_secret_basic",
+            "audience": json.dumps([]),
+        },
+        local_app_data=rel_out.local_app_data,
+    )
+    next_state = create_state(
+        leader=True,
+        relations=[
+            db_relation,
+            peer_out,
+            cluster_relation,
+            reordered_relation,
+            traefik_route_relation,
+        ],
+        secrets=list(state_out.secrets),
+    )
+
+    context.run(context.on.relation_changed(reordered_relation), next_state)
+
+    mock_authentik_api.create_oauth_provider.assert_not_called()
+    mock_authentik_api.update_oauth_provider.assert_not_called()

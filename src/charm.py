@@ -12,6 +12,7 @@ from secrets import token_urlsafe
 from urllib.parse import urljoin
 
 import ops
+from charmlibs.interfaces.oauth import OAuthProvider
 from charms.authentik_server.v0.authentik_cluster import AuthentikClusterProvider
 from charms.authentik_server.v0.authentik_server_info import AuthentikServerInfoProvider
 from charms.certificate_transfer_interface.v1.certificate_transfer import (
@@ -19,7 +20,6 @@ from charms.certificate_transfer_interface.v1.certificate_transfer import (
 )
 from charms.data_platform_libs.v0.data_interfaces import DatabaseRequires
 from charms.grafana_k8s.v0.grafana_dashboard import GrafanaDashboardProvider
-from charms.hydra.v0.oauth import CLIENT_SECRET_FIELD, OAuthProvider
 from charms.loki_k8s.v1.loki_push_api import LogForwarder
 from charms.observability_libs.v0.kubernetes_compute_resources_patch import (
     K8sResourcePatchFailedEvent,
@@ -533,12 +533,11 @@ class AuthentikServerCharm(ops.CharmBase):
             client_secret_id = relation.data[self.app].get("client_secret_id")
             if client_secret_id:
                 try:
-                    secret_obj = self.model.get_secret(id=client_secret_id)
-                    client_secret = secret_obj.get_content(refresh=True).get(CLIENT_SECRET_FIELD)
-                except ops.SecretNotFoundError:
-                    logger.warning(
-                        "Client secret %s no longer exists; regenerating", client_secret_id
-                    )
+                    client_secret = self.oauth_provider.get_client_secret(relation)
+                    if not client_secret:
+                        logger.warning(
+                            "Client secret %s no longer exists; regenerating", client_secret_id
+                        )
                 except ops.ModelError as e:
                     raise AuthentikTransientError(
                         f"Failed to read client secret {client_secret_id!r}: {e}"

@@ -7,7 +7,7 @@ import hashlib
 import logging
 
 import ops
-from charms.hydra.v0.oauth import OAUTH_PROVIDER_JSON_SCHEMA, _dump_data
+from charmlibs.interfaces.oauth import ClientConfigError, DataValidationError
 
 from authentik_api import AuthentikAPI
 from constants import (
@@ -103,20 +103,15 @@ class OauthReconciler:
         self, relation: "ops.Relation", slug: str, scopes: list[str]
     ) -> None:
         host = self._charm._authentik_host.rstrip("/")
-        relation.data[self._charm.app].update(
-            _dump_data(
-                {
-                    "issuer_url": f"{host}/application/o/{slug}/",
-                    "authorization_endpoint": f"{host}/application/o/authorize/",
-                    "token_endpoint": f"{host}/application/o/token/",
-                    "introspection_endpoint": f"{host}/application/o/introspect/",
-                    "userinfo_endpoint": f"{host}/application/o/userinfo/",
-                    "jwks_endpoint": f"{host}/application/o/{slug}/jwks/",
-                    "scope": " ".join(scopes),
-                },
-                OAUTH_PROVIDER_JSON_SCHEMA,
-            )
-        )
+        relation.data[self._charm.app].update({
+            "issuer_url": f"{host}/application/o/{slug}/",
+            "authorization_endpoint": f"{host}/application/o/authorize/",
+            "token_endpoint": f"{host}/application/o/token/",
+            "introspection_endpoint": f"{host}/application/o/introspect/",
+            "userinfo_endpoint": f"{host}/application/o/userinfo/",
+            "jwks_endpoint": f"{host}/application/o/{slug}/jwks/",
+            "scope": " ".join(scopes),
+        })
 
     def _sync_relation(
         self,
@@ -128,11 +123,10 @@ class OauthReconciler:
             logger.info("Remote application is not ready for relation %s", relation.id)
             return
 
+        raw_scope = (relation.data[relation.app].get("scope") or "").strip()
         scopes = sorted({
             scope.strip().lower()
-            for scope in (
-                relation.data[relation.app].get("scope") or "openid email profile"
-            ).split()
+            for scope in (raw_scope or "openid email profile").split()
             if scope.strip()
         })
         cache = self._peer_data[OAUTH_SYNC_CACHE_PEER_KEY]
@@ -144,13 +138,29 @@ class OauthReconciler:
         )
         self._publish_provider_info(relation, slug, scopes)
 
-        redirect_uri = relation.data[relation.app].get("redirect_uri")
-        if not redirect_uri:
-            logger.info("Relation %s has no redirect_uri yet, waiting", relation.id)
+        try:
+            client_config = self._charm.oauth_provider.get_client_config(relation)
+            if client_config:
+                client_config.validate()
+                if not client_config.grant_types:
+                    raise ClientConfigError("grant_types must not be empty")
+        except (DataValidationError, ClientConfigError) as exc:
+            logger.warning("Invalid OAuth client config in relation %s: %s", relation.id, exc)
             return
 
+        if not client_config:
+            logger.info("Relation %s has no client config yet, waiting", relation.id)
+            return
+
+        redirect_uris = [uri.strip() for uri in client_config.redirect_uris if uri.strip()]
+        grant_types = [gt.strip() for gt in client_config.grant_types if gt.strip()]
+        redirect_uris_key = ",".join(sorted(set(redirect_uris)))
         scope_key = ",".join(scopes)
-        config = f"{redirect_uri}:{authorization_flow}:{invalidation_flow}:{scope_key}"
+        grant_types_key = ",".join(sorted(set(grant_types)))
+        config = (
+            f"{redirect_uris_key}:{authorization_flow}:{invalidation_flow}:"
+            f"{scope_key}:{grant_types_key}"
+        )
         config_hash = hashlib.sha256(config.encode("utf-8")).hexdigest()
         if (
             cached_entry
@@ -173,10 +183,11 @@ class OauthReconciler:
             cache,
             client_id,
             client_secret,
-            redirect_uri,
+            redirect_uris,
             authorization_flow,
             invalidation_flow,
             property_mappings,
+            grant_types=grant_types,
         )
         self._publish_provider_info(relation, actual_slug, scopes)
 
@@ -222,10 +233,11 @@ class OauthReconciler:
         cache: dict,
         client_id: str,
         client_secret: str,
-        redirect_uri: str,
+        redirect_uris: list[str],
         authorization_flow: str,
         invalidation_flow: str,
         property_mappings: list[str],
+        grant_types: list[str] | None = None,
     ) -> tuple[str, int]:
         """Discover, persist, and synchronize a relation's owned resources."""
         relation_key = str(relation.id)
@@ -287,10 +299,11 @@ class OauthReconciler:
                             name=provider_name,
                             client_id=client_id,
                             client_secret=client_secret,
-                            redirect_uris=redirect_uri,
+                            redirect_uris=redirect_uris,
                             authorization_flow=authorization_flow,
                             invalidation_flow=invalidation_flow,
                             property_mappings=property_mappings,
+                            grant_types=grant_types,
                         )
                         provider_created = True
             self._persist_partial_state(cache, relation.id, slug, int(provider_pk))
@@ -303,10 +316,11 @@ class OauthReconciler:
                 name=provider_name,
                 client_id=client_id,
                 client_secret=client_secret,
-                redirect_uris=redirect_uri,
+                redirect_uris=redirect_uris,
                 authorization_flow=authorization_flow,
                 invalidation_flow=invalidation_flow,
                 property_mappings=property_mappings,
+                grant_types=grant_types,
             )
         if application is None:
             self._api.create_application(
