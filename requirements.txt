@@ -1,6 +1,6 @@
 ops ~=3.0
 charmlibs-interfaces-oauth~=1.2.0
-cosl~=1.11.0
+cosl~=1.12.1
 jinja2
 pydantic~=2.14.0
 lightkube~=1.0.0
