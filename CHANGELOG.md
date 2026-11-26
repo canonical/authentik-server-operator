@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.1](https://github.com/canonical/authentik-server-operator/compare/v1.4.0...v1.4.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **deps:** update dependency cosl to ~=1.12.1 ([258c481](https://github.com/canonical/authentik-server-operator/commit/258c48156abee5a25e69841b45bcff857ef85838))
+* **deps:** update dependency cosl to ~=1.12.1 ([#137](https://github.com/canonical/authentik-server-operator/issues/137)) ([0cb9162](https://github.com/canonical/authentik-server-operator/commit/0cb9162b68b41f03e8bcf50964d3b13275ca6b16))
+* **deps:** update dependency ops-scenario to &lt;8.10.1 ([3ae152c](https://github.com/canonical/authentik-server-operator/commit/3ae152c414ffaf200a873604948e0580cd7dcbe1))
+* **deps:** update dependency ops-scenario to &lt;8.10.1 ([#133](https://github.com/canonical/authentik-server-operator/issues/133)) ([555da58](https://github.com/canonical/authentik-server-operator/commit/555da58320fb439a01982a34c824aeda53d69683))
+
 ## [1.4.0](https://github.com/canonical/authentik-server-operator/compare/v1.3.0...v1.4.0) (2026-10-22)
 
 
